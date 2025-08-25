@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet'
 import L, { LatLngBounds } from 'leaflet'
 import 'leaflet.markercluster'
-import { fetchLatestForSite, fetchSitesByBBox } from '../api/usgs'
+import { fetchLatestForSite, fetchSevenDayTimeseriesReal, fetchSevenDayTimeseriesPredicted, fetchSitesByBBox } from '../api/usgs'
 import { triggerAnomaly, getPredictionStatus } from '../api/anomaly'
 import { subscribeToAlerts } from '../api/alerts'
+import { Sparkline } from './Sparkline'
+import type { TimePoint } from '../api/usgs'
 import type { UsgsSite } from '../api/usgs'
 
 // Fix default marker icons for Leaflet in bundlers
@@ -55,6 +57,11 @@ export function MapView() {
   const [anomalyMessage, setAnomalyMessage] = useState<string>('')
   const [siteCooldownUntil, setSiteCooldownUntil] = useState<Record<string, number>>({})
   const COOLDOWN_MS = 60_000 // 1 minute client-side cooldown
+  const [tsByCode, setTsByCode] = useState<Record<string, TimePoint[]>>({})
+  const [priorWeekTsByCode, setPriorWeekTsByCode] = useState<Record<string, TimePoint[]>>({})
+  const [chartParam, setChartParam] = useState<'00060' | '00065' | '00010'>('00060')
+  const [showActual, setShowActual] = useState(true)
+  const [showPredicted, setShowPredicted] = useState(true)
 
   // Focus San Jose, CA on first load
   const initialCenter = useMemo(() => ({ lat: 37.3382, lng: -121.8863 }), [])
@@ -105,8 +112,20 @@ export function MapView() {
     }
     setSelected({ site, loading: true })
     try {
-      const latest = await fetchLatestForSite(site.siteNumber)
+      const [latest, ts7, tsPrev] = await Promise.all([
+        fetchLatestForSite(site.siteNumber),
+        fetchSevenDayTimeseriesReal(site.siteNumber),
+        fetchSevenDayTimeseriesPredicted(site.siteNumber),
+      ])
       setSelected({ site, loading: false, latest })
+      setTsByCode(ts7)
+      // Shift prior week series forward by 7 days so it overlays current week
+      const dayMs = 24 * 3600 * 1000
+      const shifted: Record<string, TimePoint[]> = {}
+      Object.keys(tsPrev).forEach((code) => {
+        shifted[code] = (tsPrev[code] || []).map((p) => ({ timestampMs: p.timestampMs + 7 * dayMs, value: p.value }))
+      })
+      setPriorWeekTsByCode(shifted)
     } catch (e: any) {
       setSelected({ site, loading: false, error: e?.message || 'Failed to load latest values' })
     }
@@ -304,6 +323,45 @@ export function MapView() {
               </div>
             )
           })()}
+
+          {/* Timeseries chart (single, selectable) */}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Last 7 days</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input type="radio" name="metric" value="00060" checked={chartParam === '00060'} onChange={() => setChartParam('00060')} />
+                Discharge
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input type="radio" name="metric" value="00065" checked={chartParam === '00065'} onChange={() => setChartParam('00065')} />
+                Gage height
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input type="radio" name="metric" value="00010" checked={chartParam === '00010'} onChange={() => setChartParam('00010')} />
+                Temperature
+              </label>
+            </div>
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <div style={{ fontSize: 12, color: '#374151' }}>
+                  {chartParam === '00060' ? 'Discharge (ft³/s)' : chartParam === '00065' ? 'Gage height (ft)' : 'Temperature (°C)'}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: '#374151' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={showActual} onChange={(e) => setShowActual(e.target.checked)} />
+                    <span style={{ width: 20, height: 2, background: '#2563eb', display: 'inline-block' }}></span>
+                    Real
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={showPredicted} onChange={(e) => setShowPredicted(e.target.checked)} />
+                    <span style={{ width: 20, height: 2, background: '#dc2626', display: 'inline-block' }}></span>
+                    Predicted
+                  </label>
+                </div>
+              </div>
+              <Sparkline points={tsByCode[chartParam] || []} predictedPoints={priorWeekTsByCode[chartParam] || []} width={800} height={260} showActual={showActual} showPredicted={showPredicted} />
+            </div>
+          </div>
 
           {/* Notifications title and subscribe form */}
           <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb' }} />

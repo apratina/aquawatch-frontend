@@ -233,4 +233,77 @@ export async function fetchLatestForSite(
   return latest
 }
 
+export type TimePoint = { timestampMs: number; value: number | null }
+export type TimeseriesByParameter = Record<string, TimePoint[]>
+
+/**
+ * Fetch last 7 days of IV values for the given parameter codes.
+ */
+export async function fetchSevenDayTimeseriesReal(
+  siteNumber: string,
+  parameterCodes: string[] = ['00060', '00065', '00010']
+): Promise<TimeseriesByParameter> {
+  const params = new URLSearchParams()
+  params.set('format', 'json')
+  params.set('sites', siteNumber)
+  params.set('parameterCd', parameterCodes.join(','))
+  params.set('period', 'P7D')
+  params.set('siteStatus', 'all')
+
+  const url = `${NWIS_BASE}/iv/?${params.toString()}`
+  const { data } = await axios.get(url)
+  const series: any[] = data?.value?.timeSeries || []
+
+  const byCode: TimeseriesByParameter = {}
+  for (const s of series) {
+    const code = String(s?.variable?.variableCode?.[0]?.value || '')
+    const values: any[] = s?.values?.[0]?.value || []
+    const points: TimePoint[] = values.map((v) => ({
+      timestampMs: Date.parse(v?.dateTime || ''),
+      value: v?.value != null ? Number(v.value) : null,
+    }))
+    byCode[code] = points
+  }
+  return byCode
+}
+
+/**
+ * Fetch IV values for the prior-week window: t-14 days to t-7 days.
+ * This is useful to plot a "predicted" overlay using historical data.
+ */
+export async function fetchSevenDayTimeseriesPredicted(
+  siteNumber: string,
+  parameterCodes: string[] = ['00060', '00065', '00010']
+): Promise<TimeseriesByParameter> {
+  // Compute startDT and endDT in ISO8601 for t-14 to t-7
+  const now = Date.now()
+  const day = 24 * 3600 * 1000
+  const end = new Date(now - 7 * day)
+  const start = new Date(now - 14 * day)
+
+  const params = new URLSearchParams()
+  params.set('format', 'json')
+  params.set('sites', siteNumber)
+  params.set('parameterCd', parameterCodes.join(','))
+  params.set('startDT', start.toISOString())
+  params.set('endDT', end.toISOString())
+  params.set('siteStatus', 'all')
+
+  const url = `${NWIS_BASE}/iv/?${params.toString()}`
+  const { data } = await axios.get(url)
+  const series: any[] = data?.value?.timeSeries || []
+
+  const byCode: TimeseriesByParameter = {}
+  for (const s of series) {
+    const code = String(s?.variable?.variableCode?.[0]?.value || '')
+    const values: any[] = s?.values?.[0]?.value || []
+    const points: TimePoint[] = values.map((v) => ({
+      timestampMs: Date.parse(v?.dateTime || ''),
+      value: v?.value != null ? Number(v.value) : null,
+    }))
+    byCode[code] = points
+  }
+  return byCode
+}
+
 
