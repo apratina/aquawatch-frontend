@@ -13,6 +13,21 @@ This repository contains the React + TypeScript frontend built with Vite and Lea
 - Graceful fallbacks (N/A) when a parameter is not available
 - Tiled site queries to avoid NWIS bounding‑box service limits
 
+### Anomaly prediction (backend integration)
+
+- A “Predict Anomaly” button triggers anomaly processing for the selected site.
+- The frontend calls a service layer which invokes your backend:
+  - Trigger: `GET http://localhost:8080/ingest?station=<siteid>`
+  - Status: `GET http://localhost:8080/prediction/status?site=<siteid>` → used to prevent duplicate triggers while a prediction is in progress and to enforce a short client‑side cool‑down.
+- The UI disables the button and shows a message if a request is already in progress or within cool‑down.
+
+### Alert subscriptions
+
+- Subscribe to email notifications via the sidebar “Notifications” section.
+- The frontend calls a service layer which invokes your backend:
+  - Subscribe: `POST http://localhost:8080/alerts/subscribe` with JSON `{ "email": "you@example.com" }`.
+- After subscribing, users must confirm the SNS email subscription to start receiving alert notifications.
+
 ## Screenshots
 
 Add screenshots or a short screen recording here to illustrate the UX.
@@ -54,6 +69,8 @@ src/
 - NWIS Instantaneous Values (JSON WaterML): `https://waterservices.usgs.gov/nwis/iv/`
 
 We tile large bounding boxes into ≤1° squares to comply with NWIS service constraints and merge results client‑side.
+
+The anomaly and alerts features depend on your backend running at `http://localhost:8080`. You can change this host in the small service modules under `src/api/`.
 
 ## Environment and configuration
 
