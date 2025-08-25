@@ -20,13 +20,11 @@ export const Sparkline: React.FC<Props> = ({ points, predictedPoints = [], width
   const filtered = points.filter((p) => typeof p.value === 'number') as { timestampMs: number; value: number }[]
   const filteredPred = predictedPoints.filter((p) => typeof p.value === 'number') as { timestampMs: number; value: number }[]
   if (filtered.length === 0 && filteredPred.length === 0) {
-    const cx = width / 2
-    const cy = height / 2
-    const fs = Math.min(120, Math.floor(height * 0.6)) // ~10x baseline (12) but capped to fit
     return (
-      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="No data">
-        <text x={cx} y={cy} fontSize={fs} fontWeight={900} textAnchor="middle" dominantBaseline="middle" fill="#9ca3af">No data</text>
-      </svg>
+      <div style={{ height, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <img src="/desert.png" alt="No data" style={{ width: 280, height: 'auto', opacity: 0.9 }} />
+        <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800, color: '#9ca3af' }}>No Data</div>
+      </div>
     )
   }
   // Domains include both series

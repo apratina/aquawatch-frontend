@@ -64,6 +64,7 @@ export function MapView() {
   const [showActual, setShowActual] = useState(true)
   const [showPredicted, setShowPredicted] = useState(true)
   const [anomalyBySite, setAnomalyBySite] = useState<Record<string, boolean>>({})
+  const hasAnomalies = useMemo(() => Object.values(anomalyBySite).some(Boolean), [anomalyBySite])
 
   // Focus San Jose, CA on first load
   const initialCenter = useMemo(() => ({ lat: 37.3382, lng: -121.8863 }), [])
@@ -258,73 +259,123 @@ export function MapView() {
               </option>
             ))}
           </select>
-          <button
-            onClick={async () => {
-              if (sites.length === 0) return
-              try {
-                setAnomalyMessage('')
-                const now = Date.now()
-                const until = siteCooldownUntil[BULK_KEY]
-                if (until && now < until) {
-                  setAnomalyStatus('error')
-                  const secs = Math.ceil((until - now) / 1000)
-                  setAnomalyMessage(`Please wait ${secs}s before triggering again`)
-                  return
-                }
-
-                setAnomalyStatus('loading')
-                // New API call: POST /anomaly/check with all site ids in view
-                const siteIds = Array.from(new Set(sites.map((s) => s.siteNumber)))
-                const resp = await checkAnomaly(siteIds, 10)
-                setAnomalyStatus('success')
-                // Parse response into anomaly map if possible
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+            <button
+              onClick={async () => {
+                if (sites.length === 0) return
                 try {
-                  const map: Record<string, boolean> = {}
-                  if (Array.isArray(resp?.results)) {
-                    resp.results.forEach((r: any) => {
-                      const id = String(r?.site || r?.station || r?.id || '').trim()
-                      if (id) map[id] = Boolean(r?.anomalous)
-                    })
-                  } else if (Array.isArray(resp?.items)) {
-                    resp.items.forEach((r: any) => {
-                      const id = String(r?.site || r?.station || r?.id || '').trim()
-                      if (id) map[id] = Boolean(r?.anomalous)
-                    })
-                  } else if (Array.isArray(resp)) {
-                    resp.forEach((r: any) => {
-                      const id = String(r?.site || r?.station || r?.id || '').trim()
-                      if (id) map[id] = Boolean(r?.anomalous)
-                    })
-                  } else if (resp && typeof resp === 'object') {
-                    Object.keys(resp).forEach((k) => {
-                      const v: any = (resp as any)[k]
-                      if (v && typeof v === 'object' && 'anomalous' in v) map[String(k).trim()] = Boolean((v as any).anomalous)
-                      else if (typeof v === 'boolean') map[k] = v
-                    })
+                  setAnomalyMessage('')
+                  const now = Date.now()
+                  const until = siteCooldownUntil[BULK_KEY]
+                  if (until && now < until) {
+                    setAnomalyStatus('error')
+                    const secs = Math.ceil((until - now) / 1000)
+                    setAnomalyMessage(`Please wait ${secs}s before triggering again`)
+                    return
                   }
-                  if (Object.keys(map).length > 0) {
-                    setAnomalyBySite(map)
-                    const count = Object.values(map).filter(Boolean).length
-                    setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s); ${count} flagged.`)
-                  } else {
+
+                  setAnomalyStatus('loading')
+                  // New API call: POST /anomaly/check with all site ids in view
+                  const siteIds = Array.from(new Set(sites.map((s) => s.siteNumber)))
+                  const resp = await checkAnomaly(siteIds, 10)
+                  setAnomalyStatus('success')
+                  // Parse response into anomaly map if possible
+                  try {
+                    const map: Record<string, boolean> = {}
+                    const reasonMap: Record<string, string> = {}
+                    if (Array.isArray(resp?.results)) {
+                      resp.results.forEach((r: any) => {
+                        const id = String(r?.site || r?.station || r?.id || '').trim()
+                        if (!id) return
+                        map[id] = Boolean(r?.anomalous)
+                        const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
+                        if (reason) reasonMap[id] = reason
+                      })
+                    } else if (Array.isArray(resp?.items)) {
+                      resp.items.forEach((r: any) => {
+                        const id = String(r?.site || r?.station || r?.id || '').trim()
+                        if (!id) return
+                        map[id] = Boolean(r?.anomalous)
+                        const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
+                        if (reason) reasonMap[id] = reason
+                      })
+                    } else if (Array.isArray(resp)) {
+                      resp.forEach((r: any) => {
+                        const id = String(r?.site || r?.station || r?.id || '').trim()
+                        if (!id) return
+                        map[id] = Boolean(r?.anomalous)
+                        const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
+                        if (reason) reasonMap[id] = reason
+                      })
+                    } else if (resp && typeof resp === 'object') {
+                      Object.keys(resp).forEach((k) => {
+                        const v: any = (resp as any)[k]
+                        if (v && typeof v === 'object') {
+                          if ('anomalous' in v) map[String(k).trim()] = Boolean((v as any).anomalous)
+                          const reason = (v?.anomalous_reason ?? v?.reason ?? v?.message ?? '').toString().trim()
+                          if (reason) reasonMap[String(k).trim()] = reason
+                        } else if (typeof v === 'boolean') {
+                          map[k] = v
+                        }
+                      })
+                    }
+                    if (Object.keys(map).length > 0) {
+                      setAnomalyBySite(map)
+                      const flaggedIds = Object.keys(map).filter((k) => map[k])
+                      const count = flaggedIds.length
+                      const flaggedReasons = flaggedIds
+                        .map((id) => (reasonMap[id] || '').trim())
+                        .filter((r) => r.length > 0)
+                      let reasonSuffix = ''
+                      if (flaggedReasons.length > 0) {
+                        const freq: Record<string, number> = {}
+                        for (const r of flaggedReasons) freq[r] = (freq[r] || 0) + 1
+                        const topReason = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]
+                        reasonSuffix = ` (reason: ${topReason})`
+                      }
+                      setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s); ${count} flagged${reasonSuffix}.`)
+                    } else {
+                      setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) 
+                    }
+                  } catch {
                     setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) 
                   }
-                } catch {
-                  setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) 
+                  setSiteCooldownUntil({ ...siteCooldownUntil, [BULK_KEY]: now + COOLDOWN_MS })
+                } catch (e: any) {
+                  setAnomalyStatus('error')
+                  setAnomalyMessage(`Failed to trigger anomaly prediction${e?.message ? `: ${e.message}` : ''}`)
                 }
-                setSiteCooldownUntil({ ...siteCooldownUntil, [BULK_KEY]: now + COOLDOWN_MS })
-              } catch (e: any) {
-                setAnomalyStatus('error')
-                setAnomalyMessage(`Failed to trigger anomaly prediction${e?.message ? `: ${e.message}` : ''}`)
-              }
-            }}
-            disabled={sites.length === 0 || anomalyStatus === 'loading'}
-            aria-label="Predict anomaly for selected site"
-            title="Predict anomaly for selected site"
-            style={{ marginTop: 8, width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: sites.length > 0 && anomalyStatus !== 'loading' ? '#1f2937' : '#f3f4f6', color: sites.length > 0 && anomalyStatus !== 'loading' ? '#ffffff' : '#9ca3af', cursor: sites.length > 0 && anomalyStatus !== 'loading' ? 'pointer' : 'not-allowed' }}
-          >
-            Predict Anomaly
-          </button>
+              }}
+              disabled={sites.length === 0 || anomalyStatus === 'loading'}
+              aria-label="Predict anomaly for visible sites"
+              title="Predict anomaly for visible sites"
+              aria-busy={anomalyStatus === 'loading'}
+              style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: sites.length > 0 && anomalyStatus !== 'loading' ? '#1f2937' : '#f3f4f6', color: sites.length > 0 && anomalyStatus !== 'loading' ? '#ffffff' : '#9ca3af', cursor: sites.length > 0 && anomalyStatus !== 'loading' ? 'pointer' : 'not-allowed' }}
+            >
+              {anomalyStatus === 'loading' ? 'Predicting…' : 'Predict Anomaly'}
+            </button>
+            <button
+              onClick={() => {
+                setAnomalyBySite({})
+                setAnomalyStatus('idle')
+                setAnomalyMessage('Anomalous markers reset')
+              }}
+              disabled={!hasAnomalies}
+              aria-label="Reset anomaly markers"
+              title="Reset anomaly markers"
+              style={{
+                width: '100%',
+                border: hasAnomalies ? '1px solid #1d4ed8' : '1px solid #e5e7eb',
+                borderRadius: 6,
+                padding: '8px 10px',
+                background: hasAnomalies ? '#2563eb' : '#f3f4f6',
+                color: hasAnomalies ? '#ffffff' : '#9ca3af',
+                cursor: hasAnomalies ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Reset
+            </button>
+          </div>
           {(anomalyStatus === 'success' || anomalyStatus === 'error') && (
             <div style={{ marginTop: 6, fontSize: 12, color: anomalyStatus === 'success' ? '#065f46' : '#991b1b' }}>{anomalyMessage}</div>
           )}
@@ -406,7 +457,74 @@ export function MapView() {
             </div>
           </div>
 
-          {/* Notifications title and subscribe form */}
+          {/* Alerts above Notifications */}
+          <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb' }} />
+          {(() => {
+            const latestList = selected?.latest || []
+            const byCode: Record<string, typeof latestList[number]> = {}
+            for (const p of latestList) byCode[p.parameterCode] = p
+            const alerts: string[] = []
+            const discharge = byCode['00060']?.value
+            const stage = byCode['00065']?.value
+            const temp = byCode['00010']?.value
+            if (typeof discharge === 'number' && discharge > 5000) alerts.push('High discharge detected')
+            if (typeof stage === 'number' && stage > 10) alerts.push('High gage height (possible flooding)')
+            if (typeof temp === 'number' && temp <= 0) alerts.push('Water temperature at or below freezing')
+
+            return (
+              <div style={{ paddingTop: 12 }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Alerts</div>
+                {alerts.length === 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 0' }}>
+                    <img src="/desert.png" alt="No data" style={{ width: 280, height: 'auto', opacity: 0.9 }} />
+                    <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800, color: '#9ca3af' }}>No Data</div>
+                  </div>
+                ) : (
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {alerts.map((a, idx) => (
+                      <li key={idx}>{a}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )
+          })()}
+
+          
+
+          {/* {(() => {
+            // Basic heuristic alerts from latest parameters (or none if not selected)
+            const latestList = selected?.latest || []
+            const byCode: Record<string, typeof latestList[number]> = {}
+            for (const p of latestList) byCode[p.parameterCode] = p
+            const alerts: string[] = []
+            const discharge = byCode['00060']?.value
+            const stage = byCode['00065']?.value
+            const temp = byCode['00010']?.value
+            if (typeof discharge === 'number' && discharge > 5000) alerts.push('High discharge detected')
+            if (typeof stage === 'number' && stage > 10) alerts.push('High gage height (possible flooding)')
+            if (typeof temp === 'number' && temp <= 0) alerts.push('Water temperature at or below freezing')
+
+            return (
+              <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Alerts</div>
+                {alerts.length === 0 ? (
+                  <div style={{ color: '#6b7280' }}>No active alerts.</div>
+                ) : (
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {alerts.map((a, idx) => (
+                      <li key={idx}>{a}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )
+          })()} */}
+
+          
+        </div>
+        {/* Bottom row: Notifications with divider above */}
+        <div>
           <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb' }} />
           <div style={{ fontWeight: 700, marginTop: 8, marginBottom: 6 }}>Notifications</div>
           <form
@@ -457,39 +575,27 @@ export function MapView() {
                 </div>
               )}
             </form>
-
-          {/* {(() => {
-            // Basic heuristic alerts from latest parameters (or none if not selected)
-            const latestList = selected?.latest || []
-            const byCode: Record<string, typeof latestList[number]> = {}
-            for (const p of latestList) byCode[p.parameterCode] = p
-            const alerts: string[] = []
-            const discharge = byCode['00060']?.value
-            const stage = byCode['00065']?.value
-            const temp = byCode['00010']?.value
-            if (typeof discharge === 'number' && discharge > 5000) alerts.push('High discharge detected')
-            if (typeof stage === 'number' && stage > 10) alerts.push('High gage height (possible flooding)')
-            if (typeof temp === 'number' && temp <= 0) alerts.push('Water temperature at or below freezing')
-
-            return (
-              <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Alerts</div>
-                {alerts.length === 0 ? (
-                  <div style={{ color: '#6b7280' }}>No active alerts.</div>
-                ) : (
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {alerts.map((a, idx) => (
-                      <li key={idx}>{a}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )
-          })()} */}
-
-          
         </div>
       </aside>
+      {anomalyStatus === 'loading' && (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-busy
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            pointerEvents: 'all',
+          }}
+        >
+          <div className="spinner" aria-label="Loading" />
+        </div>
+      )}
     </div>
   )
 }
