@@ -17,6 +17,8 @@ type Props = {
 
 // Sparkline with simple axes and labels.
 export const Sparkline: React.FC<Props> = ({ points, predictedPoints = [], width = 800, height = 260, stroke = '#2563eb', showActual = true, showPredicted = true }) => {
+  const [cursorX, setCursorX] = React.useState<number | null>(null)
+  const svgRef = React.useRef<SVGSVGElement | null>(null)
   const filtered = points.filter((p) => typeof p.value === 'number') as { timestampMs: number; value: number }[]
   const filteredPred = predictedPoints.filter((p) => typeof p.value === 'number') as { timestampMs: number; value: number }[]
   if (filtered.length === 0 && filteredPred.length === 0) {
@@ -68,8 +70,32 @@ export const Sparkline: React.FC<Props> = ({ points, predictedPoints = [], width
     return `${Number(n.toFixed(2))}`
   }
 
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const svg = svgRef.current
+    if (!svg) return
+    const rect = svg.getBoundingClientRect()
+    const rel = (e.clientX - rect.left) / rect.width
+    const x = Math.max(0, Math.min(1, rel)) * width
+    // Constrain to plotting area only
+    const clamped = Math.max(margin.left, Math.min(margin.left + iw, x))
+    setCursorX(clamped)
+  }
+
+  const handleMouseLeave = () => setCursorX(null)
+
   return (
-    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="7 day chart" preserveAspectRatio="none">
+    <svg
+      ref={svgRef}
+      width="100%"
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="7 day chart"
+      preserveAspectRatio="none"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      style={{ cursor: 'crosshair' }}
+    >
       {/* Axes */}
       <line x1={margin.left} y1={margin.top + ih} x2={margin.left + iw} y2={margin.top + ih} stroke="#e5e7eb" />
       <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + ih} stroke="#e5e7eb" />
@@ -97,6 +123,60 @@ export const Sparkline: React.FC<Props> = ({ points, predictedPoints = [], width
       {showPredicted && filteredPred.length > 0 && (
         <polyline fill="none" stroke="#dc2626" strokeWidth={2} points={dPred} />
       )}
+      {/* Hover crosshair line */}
+      {cursorX !== null && (
+        <line x1={cursorX} y1={margin.top} x2={cursorX} y2={margin.top + ih} stroke="#9ca3af" strokeDasharray="4 3" strokeWidth={1} pointerEvents="none" />
+      )}
+
+      {/* Tooltip with nearest values */}
+      {cursorX !== null && (() => {
+        // invert x back to time
+        const tAtCursor = minX + ((cursorX - margin.left) / Math.max(1, iw)) * dx
+        const nearest = (arr: { timestampMs: number; value: number }[]) => {
+          if (!arr || arr.length === 0) return null as null | { t: number; v: number }
+          let bestIdx = 0
+          let bestDist = Math.abs(arr[0].timestampMs - tAtCursor)
+          for (let i = 1; i < arr.length; i++) {
+            const d = Math.abs(arr[i].timestampMs - tAtCursor)
+            if (d < bestDist) { bestDist = d; bestIdx = i }
+          }
+          return { t: arr[bestIdx].timestampMs, v: arr[bestIdx].value }
+        }
+        const nReal = showActual ? nearest(filtered) : null
+        const nPred = showPredicted ? nearest(filteredPred) : null
+
+        const tx = (() => {
+          const tooltipWidth = 120
+          const preferred = cursorX + 10
+          const maxXPos = margin.left + iw - tooltipWidth
+          return Math.max(margin.left, Math.min(maxXPos, preferred))
+        })()
+        const ty = margin.top + 8
+        const lineHeight = 14
+        const lines = [
+          `Date: ${fmtDate(tAtCursor)}`,
+          nReal ? `Real: ${fmtNum(nReal.v)}` : undefined,
+          nPred ? `Predicted: ${fmtNum(nPred.v)}` : undefined,
+        ].filter(Boolean) as string[]
+        const tooltipHeight = 10 + lines.length * (lineHeight + 4)
+
+        return (
+          <g pointerEvents="none">
+            {/* highlight dots */}
+            {nReal && (
+              <circle cx={mapX(nReal.t)} cy={mapY(nReal.v)} r={3} fill={stroke} />
+            )}
+            {nPred && (
+              <circle cx={mapX(nPred.t)} cy={mapY(nPred.v)} r={3} fill="#dc2626" />
+            )}
+            {/* tooltip card */}
+            <rect x={tx} y={ty} width={120} height={tooltipHeight} rx={6} fill="rgba(59,130,246,0.18)" stroke="#60a5fa" />
+            {lines.map((txt, i) => (
+              <text key={i} x={tx + 8} y={ty + 10 + (i + 1) * (lineHeight)} fontSize={12} fontWeight={700} fill="#1f2937">{txt}</text>
+            ))}
+          </g>
+        )
+      })()}
     </svg>
   )
 }
