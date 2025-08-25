@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaf
 import L, { LatLngBounds } from 'leaflet'
 import 'leaflet.markercluster'
 import { fetchLatestForSite, fetchSevenDayTimeseriesReal, fetchSevenDayTimeseriesPredicted, fetchSitesByBBox } from '../api/usgs'
-import { triggerAnomaly, getPredictionStatus } from '../api/anomaly'
+import { checkAnomaly } from '../api/anomaly'
 import { subscribeToAlerts } from '../api/alerts'
 import { Sparkline } from './Sparkline'
 import type { TimePoint } from '../api/usgs'
@@ -56,12 +56,14 @@ export function MapView() {
   const [anomalyStatus, setAnomalyStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [anomalyMessage, setAnomalyMessage] = useState<string>('')
   const [siteCooldownUntil, setSiteCooldownUntil] = useState<Record<string, number>>({})
-  const COOLDOWN_MS = 60_000 // 1 minute client-side cooldown
+  const COOLDOWN_MS = 30_000 // 30 seconds client-side cooldown
+  const BULK_KEY = '*'
   const [tsByCode, setTsByCode] = useState<Record<string, TimePoint[]>>({})
   const [priorWeekTsByCode, setPriorWeekTsByCode] = useState<Record<string, TimePoint[]>>({})
   const [chartParam, setChartParam] = useState<'00060' | '00065' | '00010'>('00060')
   const [showActual, setShowActual] = useState(true)
   const [showPredicted, setShowPredicted] = useState(true)
+  const [anomalyBySite, setAnomalyBySite] = useState<Record<string, boolean>>({})
 
   // Focus San Jose, CA on first load
   const initialCenter = useMemo(() => ({ lat: 37.3382, lng: -121.8863 }), [])
@@ -70,6 +72,17 @@ export function MapView() {
   const MAX_HEIGHT_DEG = 1.0
 
   const sitesInView = useMemo(() => (needsZoom ? [] as UsgsSite[] : sites), [sites, needsZoom])
+  const defaultIcon = useMemo(() => new L.Icon.Default(), [])
+  const redDefaultIcon = useMemo(() => new L.Icon.Default({ className: 'leaflet-marker-icon marker-red' as any }), [])
+
+  const isAnomalous = useCallback((siteNumber: string): boolean => {
+    const candidates = [siteNumber, siteNumber.replace(/^0+/, '')]
+    for (const c of candidates) {
+      const key = String(c).trim()
+      if (key && anomalyBySite[key]) return true
+    }
+    return false
+  }, [anomalyBySite])
 
   // Fetch sites for the current map bounds
   const loadSites = useCallback(async (bounds: LatLngBounds) => {
@@ -156,10 +169,14 @@ export function MapView() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           <BoundsWatcher onBoundsChange={loadSites} />
-          {sites.map((s) => (
+          {sites.map((s) => {
+            const anomalous = isAnomalous(s.siteNumber)
+            const markerKey = `${s.siteNumber}-${anomalous ? 'anom' : 'norm'}`
+            return (
             <Marker
-              key={s.siteNumber}
+              key={markerKey}
               position={[s.location.latitude, s.location.longitude]}
+              icon={anomalous ? redDefaultIcon : defaultIcon}
               eventHandlers={{ click: () => onSelectSite(s) }}
               ref={(instance) => { if (instance) markerRefs.current[s.siteNumber] = instance }}
             >
@@ -196,7 +213,8 @@ export function MapView() {
                 </div>
               </Popup>
             </Marker>
-          ))}
+            )
+          })}
         </MapContainer>
         {loading && (
           <div style={{ position: 'absolute', top: 8, left: 8, background: 'white', padding: '6px 10px', borderRadius: 6, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' }}>
@@ -242,12 +260,11 @@ export function MapView() {
           </select>
           <button
             onClick={async () => {
-              if (!selected) return
+              if (sites.length === 0) return
               try {
                 setAnomalyMessage('')
-                const siteId = selected.site.siteNumber
                 const now = Date.now()
-                const until = siteCooldownUntil[siteId]
+                const until = siteCooldownUntil[BULK_KEY]
                 if (until && now < until) {
                   setAnomalyStatus('error')
                   const secs = Math.ceil((until - now) / 1000)
@@ -255,30 +272,56 @@ export function MapView() {
                   return
                 }
 
-                // Ask backend for current status to avoid duplicate runs
-                const status = await getPredictionStatus(siteId)
-                if (status.inProgress) {
-                  setAnomalyStatus('error')
-                  setAnomalyMessage('Prediction was run recently for this site. Please retry after few minutes')
-                  // Optional: set a short cooldown to avoid spamming
-                  setSiteCooldownUntil({ ...siteCooldownUntil, [siteId]: now + 30_000 })
-                  return
-                }
-
                 setAnomalyStatus('loading')
-                await triggerAnomaly(siteId)
+                // New API call: POST /anomaly/check with all site ids in view
+                const siteIds = Array.from(new Set(sites.map((s) => s.siteNumber)))
+                const resp = await checkAnomaly(siteIds, 10)
                 setAnomalyStatus('success')
-                setAnomalyMessage('Anomaly prediction triggered successfully')
-                setSiteCooldownUntil({ ...siteCooldownUntil, [siteId]: now + COOLDOWN_MS })
+                // Parse response into anomaly map if possible
+                try {
+                  const map: Record<string, boolean> = {}
+                  if (Array.isArray(resp?.results)) {
+                    resp.results.forEach((r: any) => {
+                      const id = String(r?.site || r?.station || r?.id || '').trim()
+                      if (id) map[id] = Boolean(r?.anomalous)
+                    })
+                  } else if (Array.isArray(resp?.items)) {
+                    resp.items.forEach((r: any) => {
+                      const id = String(r?.site || r?.station || r?.id || '').trim()
+                      if (id) map[id] = Boolean(r?.anomalous)
+                    })
+                  } else if (Array.isArray(resp)) {
+                    resp.forEach((r: any) => {
+                      const id = String(r?.site || r?.station || r?.id || '').trim()
+                      if (id) map[id] = Boolean(r?.anomalous)
+                    })
+                  } else if (resp && typeof resp === 'object') {
+                    Object.keys(resp).forEach((k) => {
+                      const v: any = (resp as any)[k]
+                      if (v && typeof v === 'object' && 'anomalous' in v) map[String(k).trim()] = Boolean((v as any).anomalous)
+                      else if (typeof v === 'boolean') map[k] = v
+                    })
+                  }
+                  if (Object.keys(map).length > 0) {
+                    setAnomalyBySite(map)
+                    const count = Object.values(map).filter(Boolean).length
+                    setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s); ${count} flagged.`)
+                  } else {
+                    setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) 
+                  }
+                } catch {
+                  setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) 
+                }
+                setSiteCooldownUntil({ ...siteCooldownUntil, [BULK_KEY]: now + COOLDOWN_MS })
               } catch (e: any) {
                 setAnomalyStatus('error')
                 setAnomalyMessage(`Failed to trigger anomaly prediction${e?.message ? `: ${e.message}` : ''}`)
               }
             }}
-            disabled={!selected || anomalyStatus === 'loading'}
+            disabled={sites.length === 0 || anomalyStatus === 'loading'}
             aria-label="Predict anomaly for selected site"
             title="Predict anomaly for selected site"
-            style={{ marginTop: 8, width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: selected ? '#1f2937' : '#f3f4f6', color: selected ? '#ffffff' : '#9ca3af', cursor: selected ? 'pointer' : 'not-allowed' }}
+            style={{ marginTop: 8, width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: sites.length > 0 && anomalyStatus !== 'loading' ? '#1f2937' : '#f3f4f6', color: sites.length > 0 && anomalyStatus !== 'loading' ? '#ffffff' : '#9ca3af', cursor: sites.length > 0 && anomalyStatus !== 'loading' ? 'pointer' : 'not-allowed' }}
           >
             Predict Anomaly
           </button>

@@ -58,6 +58,12 @@ body {
   padding: 0;
 }
 
+/* Make default Leaflet marker appear red without changing the pin shape */
+.marker-red {
+  /* Shift default blue pin (~240° hue) to red (0°) */
+  filter: hue-rotate(120deg) saturate(180%) brightness(100%);
+}
+
 /* Utility: visually-hidden class for a11y-only text (if needed later) */
 .visually-hidden {
   position: absolute !important;

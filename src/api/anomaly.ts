@@ -34,4 +34,21 @@ export async function getPredictionStatus(stationId: string): Promise<Prediction
   }
 }
 
+// New API: check anomaly via POST with sites and threshold_percent
+export async function checkAnomaly(sites: string[], thresholdPercent: number): Promise<any> {
+  try {
+    const { data } = await axios.post(
+      `${BASE_URL}/anomaly/check`,
+      { sites, threshold_percent: thresholdPercent },
+      { headers: { 'Content-Type': 'application/json' } }
+    )
+    return data
+  } catch (err: any) {
+    const data = err?.response?.data
+    const apiMessage = (data && (data.error || data.message)) || (typeof data === 'string' ? data : null)
+    const message = apiMessage || err?.message || 'Anomaly check failed'
+    throw new Error(message)
+  }
+}
+
 
