@@ -70,6 +70,10 @@ export function MapView() {
   const [recentAlerts, setRecentAlerts] = useState<BackendAlert[]>([])
   const [recentAlertsError, setRecentAlertsError] = useState<string | undefined>()
   const [recentAlertsLoading, setRecentAlertsLoading] = useState(false)
+  const [alertsModalOpen, setAlertsModalOpen] = useState(false)
+  const [alertsPage, setAlertsPage] = useState(1)
+  const ALERTS_PER_PAGE = 5
+  const refreshAlertsTimerRef = useRef<number | null>(null)
 
   // Focus San Jose, CA on first load
   const initialCenter = useMemo(() => ({ lat: 37.3382, lng: -121.8863 }), [])
@@ -177,6 +181,16 @@ export function MapView() {
     load()
     timer = window.setInterval(load, 60_000)
     return () => { if (timer) window.clearInterval(timer) }
+  }, [])
+
+  // Cleanup one-off refresh timer on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshAlertsTimerRef.current) {
+        window.clearTimeout(refreshAlertsTimerRef.current)
+        refreshAlertsTimerRef.current = null
+      }
+    }
   }, [])
 
   return (
@@ -418,6 +432,18 @@ export function MapView() {
                 } catch (e: any) {
                   setAnomalyStatus('error')
                   setAnomalyMessage(`Failed to trigger anomaly prediction${e?.message ? `: ${e.message}` : ''}`)
+                } finally {
+                  try {
+                    if (refreshAlertsTimerRef.current) {
+                      window.clearTimeout(refreshAlertsTimerRef.current)
+                    }
+                    refreshAlertsTimerRef.current = window.setTimeout(async () => {
+                      try {
+                        const { alerts } = await getRecentAlerts(10)
+                        setRecentAlerts(alerts)
+                      } catch {}
+                    }, 15000)
+                  } catch {}
                 }
               }}
               disabled={sites.length === 0 || anomalyStatus === 'loading'}
@@ -536,27 +562,30 @@ export function MapView() {
           <div style={{ paddingTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
               <div style={{ fontWeight: 700 }}>Alerts (last 10 min)</div>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    setRecentAlertsLoading(true)
-                    setRecentAlertsError(undefined)
-                    const { alerts } = await getRecentAlerts(10)
-                    setRecentAlerts(alerts)
-                  } catch (e: any) {
-                    setRecentAlertsError(e?.message || 'Failed to load alerts')
-                  } finally {
-                    setRecentAlertsLoading(false)
-                  }
-                }}
-                style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', background: '#f9fafb', cursor: 'pointer' }}
-                aria-label="Refresh alerts"
-              >
-                Refresh
-              </button>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                {recentAlertsLoading && <span className="spinner-sm" aria-hidden />}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setRecentAlertsLoading(true)
+                      setRecentAlertsError(undefined)
+                      const { alerts } = await getRecentAlerts(10)
+                      setRecentAlerts(alerts)
+                    } catch (e: any) {
+                      setRecentAlertsError(e?.message || 'Failed to load alerts')
+                    } finally {
+                      setRecentAlertsLoading(false)
+                    }
+                  }}
+                  style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', background: '#f9fafb', cursor: 'pointer' }}
+                  aria-label="Refresh alerts"
+                >
+                  Refresh
+                </button>
+              </div>
             </div>
-            {recentAlertsLoading && <div style={{ fontSize: 12, color: '#6b7280' }}>Loading alerts…</div>}
+            {/* Loading indicator shown next to the button */}
             {recentAlertsError && <div style={{ fontSize: 12, color: '#991b1b' }}>{recentAlertsError}</div>}
 
             {(!recentAlerts || recentAlerts.length === 0) && !recentAlertsLoading ? (
@@ -566,7 +595,7 @@ export function MapView() {
               </div>
             ) : (
               <div style={{ display: 'grid', gap: 8 }}>
-                {recentAlerts.map((a) => {
+                {recentAlerts.slice(0, 1).map((a) => {
                   const sev = (a.severity || '').toLowerCase()
                   const badgeColor = sev === 'high' ? '#dc2626' : sev === 'medium' ? '#d97706' : '#059669'
                   return (
@@ -582,22 +611,36 @@ export function MapView() {
                         </div>
                         {Array.isArray(a.sites_impacted) && a.sites_impacted.length > 0 && (
                           <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                            {a.sites_impacted.map((s) => (
+                            {a.sites_impacted.slice(0, 4).map((s) => (
                               <span key={s} style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f3f4f6' }}>#{s}</span>
                             ))}
+                            {a.sites_impacted.length > 4 && (
+                              <span style={{ fontSize: 12, color: '#6b7280' }}>+{a.sites_impacted.length - 4} more</span>
+                            )}
                           </div>
                         )}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         {a.s3_signed_url && (
-                          <a href={a.s3_signed_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: '#1f2937', color: '#fff' }}>
-                            View report
+                          <a href={a.s3_signed_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 12px', fontSize: 14, background: '#1f2937', color: '#fff' }}>
+                            Download report
                           </a>
                         )}
                       </div>
                     </div>
                   )
                 })}
+                {recentAlerts.length > 1 && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setAlertsModalOpen(true); setAlertsPage(1) }}
+                      style={{ marginTop: 4, fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: '#f9fafb', cursor: 'pointer' }}
+                    >
+                      View all {recentAlerts.length} alerts
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -706,6 +749,103 @@ export function MapView() {
           }}
         >
           <div className="spinner" aria-label="Loading" />
+        </div>
+      )}
+      {alertsModalOpen && (
+        <div
+          role="dialog"
+          aria-modal
+          aria-label="All alerts"
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000,
+            display: 'grid', placeItems: 'center'
+          }}
+          onClick={() => setAlertsModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: '#fff', width: 'min(900px, 96vw)', maxHeight: '90vh', borderRadius: 10, border: '1px solid #e5e7eb', display: 'grid', gridTemplateRows: 'auto 1fr auto' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottom: '1px solid #e5e7eb' }}>
+              <div style={{ fontWeight: 700 }}>All Alerts (last 10 min)</div>
+              <button type="button" onClick={() => setAlertsModalOpen(false)} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: '#f9fafb', cursor: 'pointer' }}>Close</button>
+            </div>
+            <div style={{ padding: 12, overflow: 'hidden' }}>
+              {(() => {
+                const total = recentAlerts.length
+                const totalPages = Math.max(1, Math.ceil(total / ALERTS_PER_PAGE))
+                const page = Math.min(alertsPage, totalPages)
+                const start = (page - 1) * ALERTS_PER_PAGE
+                const end = Math.min(start + ALERTS_PER_PAGE, total)
+                const pageItems = recentAlerts.slice(start, end)
+                return (
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {pageItems.map((a) => {
+                      const sev = (a.severity || '').toLowerCase()
+                      const badgeColor = sev === 'high' ? '#dc2626' : sev === 'medium' ? '#d97706' : '#059669'
+                      return (
+                        <div key={a.alert_id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                              <span style={{ fontWeight: 700 }}>{a.alert_name || 'Alert'}</span>
+                              <span style={{ display: 'inline-block', fontSize: 12, color: '#fff', background: badgeColor, borderRadius: 9999, padding: '2px 8px' }}>{sev || 'info'}</span>
+                            </div>
+                            <div style={{ fontSize: 12, color: '#6b7280' }}>
+                              {a.anomaly_date ? `Anomaly date: ${a.anomaly_date}` : ''}
+                              {a.createdon_ms ? ` • ${new Date(a.createdon_ms).toLocaleString()}` : ''}
+                            </div>
+                            {Array.isArray(a.sites_impacted) && a.sites_impacted.length > 0 && (
+                              <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {a.sites_impacted.map((s) => (
+                                  <span key={s} style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f3f4f6' }}>#{s}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {a.s3_signed_url && (
+                              <a href={a.s3_signed_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', fontSize: 12, background: '#1f2937', color: '#fff' }}>
+                                View report
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {recentAlerts.length === 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px 0' }}>
+                        <img src="/desert.png" alt="No data" style={{ width: 280, height: 'auto', opacity: 0.9 }} />
+                        <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800, color: '#9ca3af' }}>No Data</div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderTop: '1px solid #e5e7eb' }}>
+              <div style={{ fontSize: 12, color: '#6b7280' }}>
+                Page {alertsPage} of {Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE))}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={alertsPage <= 1}
+                  onClick={() => setAlertsPage((p) => Math.max(1, p - 1))}
+                  style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: alertsPage <= 1 ? '#f3f4f6' : '#f9fafb', color: alertsPage <= 1 ? '#9ca3af' : '#111827', cursor: alertsPage <= 1 ? 'not-allowed' : 'pointer' }}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE))}
+                  onClick={() => setAlertsPage((p) => Math.min(Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)), p + 1))}
+                  style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)) ? '#f3f4f6' : '#f9fafb', color: alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)) ? '#9ca3af' : '#111827', cursor: alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)) ? 'not-allowed' : 'pointer' }}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

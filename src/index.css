@@ -76,6 +76,16 @@ body {
   animation: spin 0.8s linear infinite;
 }
 
+/* Small inline spinner (for buttons/toolbars) */
+.spinner-sm {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(107,114,128,0.3);
+  border-top-color: #6b7280;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
