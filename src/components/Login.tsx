@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { sendVerificationCode, verifyCode } from '../api/sms'
 
 export function Login({ onAuthenticated }: { onAuthenticated: (token: string, expiresAtMs: number) => void }) {
@@ -51,49 +51,72 @@ export function Login({ onAuthenticated }: { onAuthenticated: (token: string, ex
   }, [sessionId, code, onAuthenticated])
 
   return (
-    <div style={{ height: '100%', display: 'grid', placeItems: 'center', padding: 16 }}>
-      <div style={{ width: 360, maxWidth: '90vw', border: '1px solid #e5e7eb', borderRadius: 12, padding: 16, background: '#fff' }}>
-        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>Sign in with your phone</div>
-        <div style={{ color: '#6b7280', fontSize: 12, marginBottom: 12 }}>We will send a one-time passcode to your phone number.</div>
-        {step === 'enter' && (
-          <div style={{ display: 'grid', gap: 8 }}>
-            <input
-              type="tel"
-              placeholder="+14155551234"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px' }}
-            />
-            <button onClick={onSend} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', background: '#1f2937', color: '#fff' }}>Send code</button>
-          </div>
-        )}
+    <div style={{ minHeight: '100vh', width: '100%', position: 'relative', overflow: 'hidden', background: 'linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 35%, #eef2ff 100%)' }}>
+      {/* Decorative blobs */}
+      <div style={{ position: 'absolute', top: -80, left: -80, width: 280, height: 280, borderRadius: 9999, background: 'radial-gradient(closest-side, rgba(59,130,246,0.25), rgba(59,130,246,0))' }} />
+      <div style={{ position: 'absolute', bottom: -100, right: -100, width: 320, height: 320, borderRadius: 9999, background: 'radial-gradient(closest-side, rgba(99,102,241,0.22), rgba(99,102,241,0))' }} />
 
-        {step !== 'enter' && (
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div style={{ fontSize: 12, color: '#374151' }}>Code sent to <strong>{phone || 'your phone'}</strong></div>
-            <input
-              inputMode="numeric"
-              pattern="[0-9]*"
-              placeholder="Enter 6-digit code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px' }}
-            />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setStep('enter')} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', background: '#f3f4f6', color: '#374151' }}>Change number</button>
-              <button onClick={onVerify} disabled={step==='verifying'} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 12px', background: step==='verifying' ? '#9ca3af' : '#1f2937', color: '#fff', flex: 1 }}>{step==='verifying' ? 'Verifying…' : 'Verify'}</button>
+      {/* Two-column layout */}
+      <div style={{ minHeight: '100vh', display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'center', position: 'relative', width: 'min(1040px, 100%)', margin: '0 auto' }}>
+        {/* Left: brand and zen statement */}
+        <div style={{ padding: '24px 32px', display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ maxWidth: 520 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 56, height: 56, borderRadius: 14, display: 'grid', placeItems: 'center', background: 'linear-gradient(135deg, #2563eb, #3b82f6)', color: '#fff', fontSize: 28 }}>🌊</div>
+              <div style={{ fontWeight: 900, fontSize: 48, lineHeight: 1.05, color: '#1f2937', letterSpacing: 0.2 }}>AquaWatch</div>
             </div>
-            <button
-              onClick={onSend}
-              disabled={!canResend}
-              style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px', background: canResend ? '#f3f4f6' : '#f9fafb', color: canResend ? '#374151' : '#9ca3af' }}
-            >
-              {canResend ? 'Resend code' : 'Resend available soon…'}
-            </button>
+            <div style={{ marginTop: 12, fontSize: 22, color: '#374151' }}>Know your water. Act with confidence.</div>
           </div>
-        )}
+        </div>
 
-        {error && <div role="alert" style={{ marginTop: 8, color: '#991b1b', fontSize: 12 }}>{error}</div>}
+        {/* Right: login card */}
+        <div style={{ display: 'grid', placeItems: 'center', padding: 16 }}>
+          <div style={{ width: 420, maxWidth: '92vw', border: '1px solid #e5e7eb', borderRadius: 16, padding: 20, background: '#ffffffcc', backdropFilter: 'blur(6px)', boxShadow: '0 10px 30px rgba(2, 6, 23, 0.08)' }}>
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 6 }}>Sign in with your phone</div>
+            <div style={{ color: '#6b7280', fontSize: 12, marginBottom: 14 }}>We will send a one-time passcode to your phone number.</div>
+            {step === 'enter' && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <input
+                  type="tel"
+                  placeholder="+14155551234"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  style={{ border: '1px solid #d1d5db', borderRadius: 10, padding: '12px 14px', fontSize: 14 }}
+                />
+                <button onClick={onSend} style={{ border: '1px solid #1d4ed8', borderRadius: 10, padding: '12px 14px', background: '#2563eb', color: '#fff', fontWeight: 700, boxShadow: '0 2px 6px rgba(37,99,235,0.35)' }}>Send code</button>
+              </div>
+            )}
+
+            {step !== 'enter' && (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ fontSize: 12, color: '#374151' }}>Code sent to <strong>{phone || 'your phone'}</strong></div>
+                <input
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="Enter 6-digit code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  style={{ border: '1px solid #d1d5db', borderRadius: 10, padding: '12px 14px', fontSize: 16, letterSpacing: 2 }}
+                />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setStep('enter')} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '12px 14px', background: '#f3f4f6', color: '#374151' }}>Change number</button>
+                  <button onClick={onVerify} disabled={step==='verifying'} style={{ border: '1px solid #1d4ed8', borderRadius: 10, padding: '12px 14px', background: step==='verifying' ? '#93c5fd' : '#2563eb', color: '#fff', fontWeight: 700, flex: 1, boxShadow: step==='verifying' ? 'none' : '0 2px 6px rgba(37,99,235,0.35)' }}>{step==='verifying' ? 'Verifying…' : 'Verify'}</button>
+                </div>
+                <button
+                  onClick={onSend}
+                  disabled={!canResend}
+                  style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 12px', background: canResend ? '#f3f4f6' : '#f9fafb', color: canResend ? '#374151' : '#9ca3af' }}
+                >
+                  {canResend ? 'Resend code' : 'Resend available soon…'}
+                </button>
+              </div>
+            )}
+
+            {error && <div role="alert" style={{ marginTop: 8, color: '#991b1b', fontSize: 12 }}>{error}</div>}
+
+            <div style={{ marginTop: 12, fontSize: 11, color: '#6b7280' }}>Standard SMS rates may apply. By continuing you agree to receive one-time passcodes for authentication.</div>
+          </div>
+        </div>
       </div>
     </div>
   )
