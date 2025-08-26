@@ -4,7 +4,7 @@ import L, { LatLngBounds } from 'leaflet'
 import 'leaflet.markercluster'
 import { fetchLatestForSite, fetchSevenDayTimeseriesReal, fetchSevenDayTimeseriesPredicted, fetchSitesByBBox } from '../api/usgs'
 import { checkAnomaly } from '../api/anomaly'
-import { subscribeToAlerts } from '../api/alerts'
+import { subscribeToAlerts, getRecentAlerts, type BackendAlert } from '../api/alerts'
 import { Sparkline } from './Sparkline'
 import html2canvas from 'html2canvas'
 import { createPdfReport } from '../api/report'
@@ -67,6 +67,9 @@ export function MapView() {
   const [showPredicted, setShowPredicted] = useState(true)
   const [anomalyBySite, setAnomalyBySite] = useState<Record<string, boolean>>({})
   const hasAnomalies = useMemo(() => Object.values(anomalyBySite).some(Boolean), [anomalyBySite])
+  const [recentAlerts, setRecentAlerts] = useState<BackendAlert[]>([])
+  const [recentAlertsError, setRecentAlertsError] = useState<string | undefined>()
+  const [recentAlertsLoading, setRecentAlertsLoading] = useState(false)
 
   // Focus San Jose, CA on first load
   const initialCenter = useMemo(() => ({ lat: 37.3382, lng: -121.8863 }), [])
@@ -155,6 +158,26 @@ export function MapView() {
       loadSites(map.getBounds())
     } catch {}
   }, [loadSites])
+
+  // Load recent alerts initially and every 60s
+  useEffect(() => {
+    let timer: number | undefined
+    const load = async () => {
+      try {
+        setRecentAlertsLoading(true)
+        setRecentAlertsError(undefined)
+        const { alerts } = await getRecentAlerts(10)
+        setRecentAlerts(alerts)
+      } catch (e: any) {
+        setRecentAlertsError(e?.message || 'Failed to load alerts')
+      } finally {
+        setRecentAlertsLoading(false)
+      }
+    }
+    load()
+    timer = window.setInterval(load, 60_000)
+    return () => { if (timer) window.clearInterval(timer) }
+  }, [])
 
   return (
     <div style={{ height: '100%', width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 7fr) minmax(0, 3fr)', gap: 0 }}>
@@ -364,7 +387,7 @@ export function MapView() {
                               useCORS: true,
                               scale: 1,
                               logging: false,
-                              onclone: (clonedDoc) => {
+                              onclone: (clonedDoc: Document) => {
                                 const imgs = clonedDoc.querySelectorAll('.leaflet-marker-icon.marker-red') as NodeListOf<HTMLImageElement>
                                 imgs.forEach((img) => {
                                   try { img.src = redDataUrl } catch {}
@@ -510,36 +533,74 @@ export function MapView() {
 
           {/* Alerts above Notifications */}
           <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb' }} />
-          {(() => {
-            const latestList = selected?.latest || []
-            const byCode: Record<string, typeof latestList[number]> = {}
-            for (const p of latestList) byCode[p.parameterCode] = p
-            const alerts: string[] = []
-            const discharge = byCode['00060']?.value
-            const stage = byCode['00065']?.value
-            const temp = byCode['00010']?.value
-            if (typeof discharge === 'number' && discharge > 5000) alerts.push('High discharge detected')
-            if (typeof stage === 'number' && stage > 10) alerts.push('High gage height (possible flooding)')
-            if (typeof temp === 'number' && temp <= 0) alerts.push('Water temperature at or below freezing')
+          <div style={{ paddingTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ fontWeight: 700 }}>Alerts (last 10 min)</div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setRecentAlertsLoading(true)
+                    setRecentAlertsError(undefined)
+                    const { alerts } = await getRecentAlerts(10)
+                    setRecentAlerts(alerts)
+                  } catch (e: any) {
+                    setRecentAlertsError(e?.message || 'Failed to load alerts')
+                  } finally {
+                    setRecentAlertsLoading(false)
+                  }
+                }}
+                style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', background: '#f9fafb', cursor: 'pointer' }}
+                aria-label="Refresh alerts"
+              >
+                Refresh
+              </button>
+            </div>
+            {recentAlertsLoading && <div style={{ fontSize: 12, color: '#6b7280' }}>Loading alerts…</div>}
+            {recentAlertsError && <div style={{ fontSize: 12, color: '#991b1b' }}>{recentAlertsError}</div>}
 
-            return (
-              <div style={{ paddingTop: 12 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Alerts</div>
-                {alerts.length === 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 0' }}>
-                    <img src="/desert.png" alt="No data" style={{ width: 280, height: 'auto', opacity: 0.9 }} />
-                    <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800, color: '#9ca3af' }}>No Data</div>
-                  </div>
-                ) : (
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    {alerts.map((a, idx) => (
-                      <li key={idx}>{a}</li>
-                    ))}
-                  </ul>
-                )}
+            {(!recentAlerts || recentAlerts.length === 0) && !recentAlertsLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 0' }}>
+                <img src="/desert.png" alt="No data" style={{ width: 280, height: 'auto', opacity: 0.9 }} />
+                <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800, color: '#9ca3af' }}>No Data</div>
               </div>
-            )
-          })()}
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {recentAlerts.map((a) => {
+                  const sev = (a.severity || '').toLowerCase()
+                  const badgeColor = sev === 'high' ? '#dc2626' : sev === 'medium' ? '#d97706' : '#059669'
+                  return (
+                    <div key={a.alert_id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <span style={{ fontWeight: 700 }}>{a.alert_name || 'Alert'}</span>
+                          <span style={{ display: 'inline-block', fontSize: 12, color: '#fff', background: badgeColor, borderRadius: 9999, padding: '2px 8px' }}>{sev || 'info'}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#6b7280' }}>
+                          {a.anomaly_date ? `Anomaly date: ${a.anomaly_date}` : ''}
+                          {a.createdon_ms ? ` • ${new Date(a.createdon_ms).toLocaleString()}` : ''}
+                        </div>
+                        {Array.isArray(a.sites_impacted) && a.sites_impacted.length > 0 && (
+                          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {a.sites_impacted.map((s) => (
+                              <span key={s} style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f3f4f6' }}>#{s}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {a.s3_signed_url && (
+                          <a href={a.s3_signed_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: '#1f2937', color: '#fff' }}>
+                            View report
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
 
           
 
