@@ -1,11 +1,9 @@
-import axios from 'axios'
-
-const BASE_URL = 'http://localhost:8080'
+import { http } from './http'
 
 // Triggers backend ingestion/anomaly prediction for a given USGS station id.
 export async function triggerAnomaly(stationId: string): Promise<void> {
   try {
-    await axios.get(`${BASE_URL}/ingest`, { params: { station: stationId } })
+    await http.get(`/ingest`, { params: { station: stationId } })
   } catch (err: any) {
     const data = err?.response?.data
     const apiMessage = (data && (data.error || data.message)) || (typeof data === 'string' ? data : null)
@@ -24,7 +22,7 @@ export type PredictionStatus = {
 
 // Query prediction status for a station. Maps snake_case to camelCase.
 export async function getPredictionStatus(stationId: string): Promise<PredictionStatus> {
-  const { data } = await axios.get(`${BASE_URL}/prediction/status`, { params: { site: stationId } })
+  const { data } = await http.get(`/prediction/status`, { params: { site: stationId } })
   return {
     site: String(data?.site ?? stationId),
     inProgress: Boolean(data?.in_progress),
@@ -37,8 +35,8 @@ export async function getPredictionStatus(stationId: string): Promise<Prediction
 // New API: check anomaly via POST with sites and threshold_percent
 export async function checkAnomaly(sites: string[], thresholdPercent: number): Promise<any> {
   try {
-    const { data } = await axios.post(
-      `${BASE_URL}/anomaly/check`,
+    const { data } = await http.post(
+      `/anomaly/check`,
       { sites, threshold_percent: thresholdPercent },
       { headers: { 'Content-Type': 'application/json' } }
     )
