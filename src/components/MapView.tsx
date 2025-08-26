@@ -6,6 +6,8 @@ import { fetchLatestForSite, fetchSevenDayTimeseriesReal, fetchSevenDayTimeserie
 import { checkAnomaly } from '../api/anomaly'
 import { subscribeToAlerts } from '../api/alerts'
 import { Sparkline } from './Sparkline'
+import html2canvas from 'html2canvas'
+import { createPdfReport } from '../api/report'
 import type { TimePoint } from '../api/usgs'
 import type { UsgsSite } from '../api/usgs'
 
@@ -168,6 +170,7 @@ export function MapView() {
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            crossOrigin
           />
           <BoundsWatcher onBoundsChange={loadSites} />
           {sites.map((s) => {
@@ -283,6 +286,7 @@ export function MapView() {
                   try {
                     const map: Record<string, boolean> = {}
                     const reasonMap: Record<string, string> = {}
+                    const predictedMap: Record<string, number> = {}
                     if (Array.isArray(resp?.results)) {
                       resp.results.forEach((r: any) => {
                         const id = String(r?.site || r?.station || r?.id || '').trim()
@@ -290,6 +294,9 @@ export function MapView() {
                         map[id] = Boolean(r?.anomalous)
                         const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
                         if (reason) reasonMap[id] = reason
+                        const pv = (r?.predicted_value as any)
+                        const pvNum = typeof pv === 'number' ? pv : Number(pv)
+                        if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
                       })
                     } else if (Array.isArray(resp?.items)) {
                       resp.items.forEach((r: any) => {
@@ -298,6 +305,9 @@ export function MapView() {
                         map[id] = Boolean(r?.anomalous)
                         const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
                         if (reason) reasonMap[id] = reason
+                        const pv = (r?.predicted_value as any)
+                        const pvNum = typeof pv === 'number' ? pv : Number(pv)
+                        if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
                       })
                     } else if (Array.isArray(resp)) {
                       resp.forEach((r: any) => {
@@ -306,6 +316,9 @@ export function MapView() {
                         map[id] = Boolean(r?.anomalous)
                         const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
                         if (reason) reasonMap[id] = reason
+                        const pv = (r?.predicted_value as any)
+                        const pvNum = typeof pv === 'number' ? pv : Number(pv)
+                        if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
                       })
                     } else if (resp && typeof resp === 'object') {
                       Object.keys(resp).forEach((k) => {
@@ -314,6 +327,9 @@ export function MapView() {
                           if ('anomalous' in v) map[String(k).trim()] = Boolean((v as any).anomalous)
                           const reason = (v?.anomalous_reason ?? v?.reason ?? v?.message ?? '').toString().trim()
                           if (reason) reasonMap[String(k).trim()] = reason
+                          const pv = (v?.predicted_value as any)
+                          const pvNum = typeof pv === 'number' ? pv : Number(pv)
+                          if (Number.isFinite(pvNum)) predictedMap[String(k).trim()] = pvNum
                         } else if (typeof v === 'boolean') {
                           map[k] = v
                         }
@@ -334,6 +350,41 @@ export function MapView() {
                         reasonSuffix = ` (reason: ${topReason})`
                       }
                       setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s); ${count} flagged${reasonSuffix}.`)
+
+                      if (count > 0) {
+                        try {
+                          // small delay to allow any UI updates before capture
+                          await new Promise((r) => setTimeout(r, 300))
+                          const mapEl = document.querySelector('.leaflet-container') as HTMLElement
+                          if (mapEl) {
+                            // Provide red pin SVG for anomalies in the cloned DOM only
+                            const redSvg = `<svg xmlns='http://www.w3.org/2000/svg' width='25' height='41' viewBox='0 0 25 41'><path d='M12.5 0C5.6 0 0 5.6 0 12.5c0 8.1 11.2 17.6 11.7 18 .5.4 1.1.4 1.6 0C13.8 30.1 25 20.6 25 12.5 25 5.6 19.4 0 12.5 0z' fill='#dc2626'/><circle cx='12.5' cy='12.5' r='5.5' fill='#ffffff'/></svg>`
+                            const redDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(redSvg)}`
+                            const canvas = await html2canvas(mapEl, {
+                              useCORS: true,
+                              scale: 1,
+                              logging: false,
+                              onclone: (clonedDoc) => {
+                                const imgs = clonedDoc.querySelectorAll('.leaflet-marker-icon.marker-red') as NodeListOf<HTMLImageElement>
+                                imgs.forEach((img) => {
+                                  try { img.src = redDataUrl } catch {}
+                                })
+                              },
+                            } as any)
+                            const dataUrl = canvas.toDataURL('image/png')
+                            const today = new Date().toISOString().slice(0, 10)
+                            const items = flaggedIds.map((id) => ({
+                              site: id,
+                              reason: (reasonMap[id] || flaggedReasons[0] || '').toString() || undefined,
+                              predicted_value: (predictedMap[id] ?? null) as number | null,
+                              anomaly_date: today,
+                            }))
+                            await createPdfReport(dataUrl, items)
+                          }
+                        } catch (err) {
+                          console.warn('Failed to create report', err)
+                        }
+                      }
                     } else {
                       setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) 
                     }

@@ -13,6 +13,7 @@
     "@types/leaflet": "^1.9.20",
     "@types/leaflet.markercluster": "^1.5.5",
     "axios": "^1.11.0",
+    "html2canvas": "^1.4.1",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "react": "^19.1.1",

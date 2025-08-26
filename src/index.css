@@ -64,6 +64,8 @@ body {
   filter: hue-rotate(120deg) saturate(180%) brightness(100%);
 }
 
+/* Removed hide-rule approach; switched to coloring anomalous markers in onclone */
+
 /* Center-page spinner */
 .spinner {
   width: 48px;
