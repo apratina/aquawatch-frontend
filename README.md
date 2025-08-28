@@ -15,18 +15,18 @@ This repository contains the React + TypeScript frontend built with Vite and Lea
 
 ### Anomaly prediction (backend integration)
 
-- A “Predict Anomaly” button triggers anomaly processing for the selected site.
-- The frontend calls a service layer which invokes your backend:
-  - Trigger: `GET http://localhost:8080/ingest?station=<siteid>`
-  - Status: `GET http://localhost:8080/prediction/status?site=<siteid>` → used to prevent duplicate triggers while a prediction is in progress and to enforce a short client‑side cool‑down.
-- The UI disables the button and shows a message if a request is already in progress or within cool‑down.
+- “Predict Anomaly” triggers anomaly processing for all sites currently visible on the map.
+- The frontend uses a service layer to call your backend:
+  - Trigger (bulk): `POST http://localhost:8080/anomaly/check` with body `{ "sites": ["<siteid>"...], "threshold_percent": 10 }`
+  - Status: `GET http://localhost:8080/prediction/status?site=<siteid>` – used to avoid rapid re‑triggers (cool‑down + status check).
+- After a run, the UI colors anomalous sites red, and can generate a PDF report (map snapshot + details) via `POST /report/pdf`.
 
-### Alert subscriptions
+### Alerts & Notifications
 
-- Subscribe to email notifications via the sidebar “Notifications” section.
-- The frontend calls a service layer which invokes your backend:
-  - Subscribe: `POST http://localhost:8080/alerts/subscribe` with JSON `{ "email": "you@example.com" }`.
-- After subscribing, users must confirm the SNS email subscription to start receiving alert notifications.
+- Subscribe to email notifications in the Alerts tab.
+- Backend endpoints used:
+  - Subscribe: `POST http://localhost:8080/alerts/subscribe` with `{ "email": "you@example.com" }` (user must confirm SNS email).
+  - Recent alerts: `GET http://localhost:8080/alerts?minutes=10` (UI shows up to 5 recent items and a modal for all).
 
 ## Screenshots
 
@@ -50,14 +50,22 @@ npm run dev
 
 The app serves at http://localhost:5173 (or the next available port printed by Vite).
 
+If you see an error like `TypeError: crypto.hash is not a function` with Vite 7 on Node 18, ensure the project is pinned to Vite 5 (this repo uses Vite 5.4.x) or upgrade Node.
+
 ## Project structure
 
 ```
 src/
   api/
     usgs.ts          # NWIS helpers: sites by bbox (tiled), site by id, IV values
+    anomaly.ts       # Anomaly & training service calls
+    alerts.ts        # Alerts subscribe and recent alerts
+    report.ts        # Create PDF map report
+    http.ts          # Axios instance; injects X-Session-Token when present
   components/
     MapView.tsx      # Map layout, site fetching, selection, details panel
+    Login.tsx        # OTP login (optional, feature-flagged)
+    Sparkline.tsx    # Lightweight chart (real vs predicted overlay)
   App.tsx            # App shell
   main.tsx           # Client entry (mounts React), global CSS imports
   index.css          # Global styles (Leaflet popup tweaks, utility)
@@ -70,11 +78,22 @@ src/
 
 We tile large bounding boxes into ≤1° squares to comply with NWIS service constraints and merge results client‑side.
 
-The anomaly and alerts features depend on your backend running at `http://localhost:8080`. You can change this host in the small service modules under `src/api/`.
+The anomaly, alerts, SMS (OTP), report and training features depend on your backend running at `http://localhost:8080`. You can adjust base URLs in the small service modules under `src/api/`.
+
+### Training
+
+- Train multiple models for all visible stations from the Training tab.
+- Endpoints used:
+  - Trigger (bulk): `GET http://localhost:8080/ingest?station=<id>&station=<id>&train=true`
+  - Recent models: `GET http://localhost:8080/train/models?minutes=10080`
+- The Training tab shows recent runs (Run #, Sites count, timestamp). Expanding a run reveals the list of sites.
 
 ## Environment and configuration
 
 No secrets are required for public NWIS endpoints. If you add private APIs later, store keys in `.env` and do not commit them—`.gitignore` already excludes env files.
+
+Optional feature flag:
+- `VITE_ENABLE_LOGIN=true` – enables OTP Login UI (Vonage Verify backend assumed). When disabled or token expired, the app bypasses login and loads the map directly.
 
 ## Accessibility & UX
 
