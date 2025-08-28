@@ -6,12 +6,15 @@ This repository contains the React + TypeScript frontend built with Vite and Lea
 
 ## Features
 
-- Interactive map with NWIS sites loaded for the current map view
-- Marker popups styled with quick site metadata and link to “Access Data”
-- Site selector in the sidebar and details panel with latest values
-- Side‑by‑side tiles for Discharge (ft³/s), Gage height (ft), Temperature (°C)
-- Graceful fallbacks (N/A) when a parameter is not available
-- Tiled site queries to avoid NWIS bounding‑box service limits
+- Interactive map with NWIS sites loaded for the current map view (tile‑based bbox fetch to respect NWIS limits)
+- Marker popups with site metadata and quick link to “Access Data”
+- Sites in view selector and details panel with latest values (discharge, gage height, temperature)
+- Timeseries chart (last 7 days) with selectable metric; overlays Real vs Predicted and allows toggle per series
+- Anomaly prediction for all visible sites, with red pin markers for anomalous results and optional PDF report (map snapshot + details)
+- Alerts tab showing recent alerts (top 5 in panel, “View all” modal), plus inline email subscription with error display
+- Training tab to bulk train models for all visible sites and a Recent training list (expand to see sites)
+- OTP login (optional feature flag) with Vonage Verify via backend; session token is injected into requests via Axios interceptor
+- Polished UX: compact Leaflet popups, disabled states with inline spinners, accessible labels, empty‑state UI
 
 ### Anomaly prediction (backend integration)
 
@@ -20,6 +23,14 @@ This repository contains the React + TypeScript frontend built with Vite and Lea
   - Trigger (bulk): `POST http://localhost:8080/anomaly/check` with body `{ "sites": ["<siteid>"...], "threshold_percent": 10 }`
   - Status: `GET http://localhost:8080/prediction/status?site=<siteid>` – used to avoid rapid re‑triggers (cool‑down + status check).
 - After a run, the UI colors anomalous sites red, and can generate a PDF report (map snapshot + details) via `POST /report/pdf`.
+
+### Training models (backend integration)
+
+- “Train Model” triggers bulk training for all visible stations in the Training tab.
+- The frontend uses a service layer to call your backend:
+  - Trigger (bulk): `GET http://localhost:8080/ingest?station=<id>&station=<id>&train=true`
+  - Recent models: `GET http://localhost:8080/train/models?minutes=10080`
+- The UI shows a success/error message inline under the button and lists recent training runs. Each run shows Run #, Sites count, and timestamp; expanding a run reveals the full set of sites.
 
 ### Alerts & Notifications
 
