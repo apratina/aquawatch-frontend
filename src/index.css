@@ -136,6 +136,16 @@ body {
   border-color: rgba(17, 24, 39, 0.95) transparent transparent transparent;
 }
 
+/* Disclosure arrow for details summary (rotates on open) */
+details > summary .arrow::before {
+  content: "▸";
+  display: inline-block;
+  transition: transform 120ms ease;
+}
+details[open] > summary .arrow::before {
+  content: "▾";
+}
+
 h1 {
   font-size: 3.2em;
   line-height: 1.1;

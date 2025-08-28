@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaf
 import L, { LatLngBounds } from 'leaflet'
 import 'leaflet.markercluster'
 import { fetchLatestForSite, fetchSevenDayTimeseriesReal, fetchSevenDayTimeseriesPredicted, fetchSitesByBBox } from '../api/usgs'
-import { checkAnomaly } from '../api/anomaly'
+import { checkAnomaly, triggerTrainingBulk, getTrainModels, type TrainModelItem } from '../api/anomaly'
 import { subscribeToAlerts, getRecentAlerts, type BackendAlert } from '../api/alerts'
 import { Sparkline } from './Sparkline'
 import html2canvas from 'html2canvas'
@@ -57,6 +57,8 @@ export function MapView() {
   const [subscribeMessage, setSubscribeMessage] = useState<string>('')
   const [anomalyStatus, setAnomalyStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [anomalyMessage, setAnomalyMessage] = useState<string>('')
+  const [trainingStatus, setTrainingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [trainingMessage, setTrainingMessage] = useState<string>('')
   const [siteCooldownUntil, setSiteCooldownUntil] = useState<Record<string, number>>({})
   const COOLDOWN_MS = 30_000 // 30 seconds client-side cooldown
   const BULK_KEY = '*'
@@ -75,6 +77,9 @@ export function MapView() {
   const ALERTS_PER_PAGE = 5
   const refreshAlertsTimerRef = useRef<number | null>(null)
   const [activeTab, setActiveTab] = useState<'prediction' | 'alerts' | 'training'>('prediction')
+  const [trainedItems, setTrainedItems] = useState<TrainModelItem[]>([])
+  const [trainedLoading, setTrainedLoading] = useState(false)
+  const [trainedError, setTrainedError] = useState<string | undefined>()
 
   // Focus San Jose, CA on first load
   const initialCenter = useMemo(() => ({ lat: 37.3382, lng: -121.8863 }), [])
@@ -171,7 +176,7 @@ export function MapView() {
       try {
         setRecentAlertsLoading(true)
         setRecentAlertsError(undefined)
-        const { alerts } = await getRecentAlerts(10)
+        const { alerts } = await getRecentAlerts(1000)
         setRecentAlerts(alerts)
       } catch (e: any) {
         setRecentAlertsError(e?.message || 'Failed to load alerts')
@@ -193,6 +198,27 @@ export function MapView() {
       }
     }
   }, [])
+
+  // Load recent trained models when entering Training tab and every 60s while there
+  useEffect(() => {
+    if (activeTab !== 'training') return
+    let timer: number | undefined
+    const load = async () => {
+      try {
+        setTrainedLoading(true)
+        setTrainedError(undefined)
+        const { items } = await getTrainModels(10080)
+        setTrainedItems(items)
+      } catch (e: any) {
+        setTrainedError(e?.message || 'Failed to load trained models')
+      } finally {
+        setTrainedLoading(false)
+      }
+    }
+    load()
+    timer = window.setInterval(load, 60_000)
+    return () => { if (timer) window.clearInterval(timer) }
+  }, [activeTab])
 
   return (
     <div style={{ height: '100%', width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 7fr) minmax(0, 3fr)', gap: 0 }}>
@@ -333,7 +359,116 @@ export function MapView() {
         </div>
         )}
         {activeTab === 'training' && (
-          <div />
+        <div style={{ marginTop: 0, paddingTop: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ fontWeight: 700 }}>Sites in view</div>
+            <div style={{ fontSize: 12, color: '#6b7280' }}>{sites.length}</div>
+          </div>
+          <select
+            onChange={(e) => {
+              const sn = e.target.value
+              const site = sitesInView.find((s) => s.siteNumber === sn)
+              if (site) onSelectSite(site, true)
+            }}
+            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 8px' }}
+            value={selected?.site.siteNumber ?? ''}
+            disabled={needsZoom || sitesInView.length === 0}
+          >
+            <option value="" disabled>
+              {needsZoom ? 'Zoom in to load sites' : sitesInView.length > 0 ? 'Select a site…' : 'No sites in view'}
+            </option>
+            {sitesInView.map((s) => (
+              <option key={s.siteNumber} value={s.siteNumber}>
+                #{s.siteNumber} · {s.name}
+              </option>
+            ))}
+          </select>
+          <div style={{ marginTop: 8 }}>
+            <button
+              onClick={async () => {
+                const stations = Array.from(new Set(sitesInView.map((s) => s.siteNumber)))
+                if (stations.length === 0) return
+                try {
+                  setTrainingStatus('loading')
+                  setTrainingMessage('')
+                  await triggerTrainingBulk(stations)
+                  setTrainingStatus('success')
+                  setTrainingMessage(`Training triggered for ${stations.length} station(s). This may take a few minutes.`)
+                } catch (e: any) {
+                  setTrainingStatus('error')
+                  setTrainingMessage(`Failed to trigger training${e?.message ? `: ${e.message}` : ''}`)
+                }
+              }}
+              disabled={sitesInView.length === 0 || trainingStatus === 'loading'}
+              style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: sitesInView.length > 0 && trainingStatus !== 'loading' ? '#1f2937' : '#f3f4f6', color: sitesInView.length > 0 && trainingStatus !== 'loading' ? '#ffffff' : '#9ca3af', cursor: sitesInView.length > 0 && trainingStatus !== 'loading' ? 'pointer' : 'not-allowed' }}
+            >
+              Train Model
+            </button>
+            {(trainingStatus === 'success' || trainingStatus === 'error') && (
+              <div style={{ marginTop: 6, fontSize: 12, color: trainingStatus === 'success' ? '#065f46' : '#991b1b' }}>{trainingMessage}</div>
+            )}
+          </div>
+          {/* Recent trained models */}
+          <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb' }} />
+          <div style={{ paddingTop: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ fontWeight: 700 }}>Recent training (last 7 days)</div>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                {trainedLoading && <span className="spinner-sm" aria-hidden />}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setTrainedLoading(true)
+                      setTrainedError(undefined)
+                      const { items } = await getTrainModels(10080)
+                      setTrainedItems(items)
+                    } catch (e: any) {
+                      setTrainedError(e?.message || 'Failed to load trained models')
+                    } finally {
+                      setTrainedLoading(false)
+                    }
+                  }}
+                  style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', background: '#f9fafb', cursor: 'pointer' }}
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+            {trainedError && <div style={{ fontSize: 12, color: '#991b1b' }}>{trainedError}</div>}
+            {(!trainedItems || trainedItems.length === 0) && !trainedLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 0' }}>
+                <img src="/desert.png" alt="No data" style={{ width: 200, height: 'auto', opacity: 0.9 }} />
+                <div style={{ marginTop: 8, fontSize: 16, fontWeight: 700, color: '#9ca3af' }}>No models</div>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {trainedItems.map((it) => (
+                  <div key={it.uuid} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10 }}>
+                    <details>
+                      <summary style={{ listStyle: 'none', cursor: 'pointer', display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 8 }}>
+                        <span className="arrow" aria-hidden style={{ color: '#6b7280' }}></span>
+                        <div>
+                          <div style={{ fontWeight: 700 }}>Run # {it.uuid.slice(0, 29)}</div>
+                          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                            Sites: {Array.isArray(it.sites) ? it.sites.length : 0} • {new Date(it.createdon).toLocaleString()}
+                          </div>
+                        </div>
+                      </summary>
+                      {Array.isArray(it.sites) && it.sites.length > 0 && (
+                        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {it.sites.map((s) => (
+                            <span key={s} style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f3f4f6' }}>#{s}</span>
+                          ))}
+                        </div>
+                      )}
+                    </details>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
         )}
         {/* <div style={{ overflow: 'auto', display: 'grid', gap: 6 }}></div> */}
 
@@ -507,7 +642,7 @@ export function MapView() {
                     } finally {
                       try {
                         if (refreshAlertsTimerRef.current) window.clearTimeout(refreshAlertsTimerRef.current)
-                        refreshAlertsTimerRef.current = window.setTimeout(async () => { try { const { alerts } = await getRecentAlerts(10); setRecentAlerts(alerts) } catch {} }, 15000)
+                        refreshAlertsTimerRef.current = window.setTimeout(async () => { try { const { alerts } = await getRecentAlerts(1000); setRecentAlerts(alerts) } catch {} }, 15000)
                       } catch {}
                     }
                   }}
@@ -626,7 +761,7 @@ export function MapView() {
 
             {/* Alerts list second */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <div style={{ fontWeight: 700 }}>Alerts (last 10 min)</div>
+              <div style={{ fontWeight: 700 }}>Alerts (last 1 day)</div>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 {recentAlertsLoading && <span className="spinner-sm" aria-hidden />}
                 <button
@@ -635,7 +770,7 @@ export function MapView() {
                     try {
                       setRecentAlertsLoading(true)
                       setRecentAlertsError(undefined)
-                      const { alerts } = await getRecentAlerts(10)
+                      const { alerts } = await getRecentAlerts(1000)
                       setRecentAlerts(alerts)
                     } catch (e: any) {
                       setRecentAlertsError(e?.message || 'Failed to load alerts')
