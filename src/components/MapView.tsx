@@ -74,6 +74,7 @@ export function MapView() {
   const [alertsPage, setAlertsPage] = useState(1)
   const ALERTS_PER_PAGE = 5
   const refreshAlertsTimerRef = useRef<number | null>(null)
+  const [activeTab, setActiveTab] = useState<'prediction' | 'alerts' | 'training'>('prediction')
 
   // Focus San Jose, CA on first load
   const initialCenter = useMemo(() => ({ lat: 37.3382, lng: -121.8863 }), [])
@@ -274,8 +275,37 @@ export function MapView() {
           </div>
         )}
       </div>
-      <aside style={{ borderLeft: '1px solid #e5e7eb', padding: 8, overflow: 'hidden', display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 8 }}>
-        <div>
+      <aside style={{ borderLeft: '1px solid #e5e7eb', padding: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* Tabs header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid #e5e7eb', marginBottom: 8 }}>
+          {[
+            { key: 'prediction', label: 'Prediction' },
+            { key: 'alerts', label: 'Alerts' },
+            { key: 'training', label: 'Training' },
+          ].map((t) => {
+            const isActive = activeTab === (t.key as any)
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setActiveTab(t.key as any)}
+                style={{
+                  border: '1px solid #e5e7eb',
+                  borderBottomColor: isActive ? '#ffffff' : '#e5e7eb',
+                  borderRadius: '6px 6px 0 0',
+                  padding: '6px 10px',
+                  background: isActive ? '#ffffff' : '#f9fafb',
+                  color: '#111827',
+                  cursor: 'pointer',
+                }}
+              >
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
+        {activeTab === 'prediction' && (
+        <div style={{ marginTop: 0, paddingTop: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
             <div style={{ fontWeight: 700 }}>Sites in view</div>
             <div style={{ fontSize: 12, color: '#6b7280' }}>{sites.length}</div>
@@ -299,192 +329,18 @@ export function MapView() {
               </option>
             ))}
           </select>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-            <button
-              onClick={async () => {
-                if (sites.length === 0) return
-                try {
-                  setAnomalyMessage('')
-                  const now = Date.now()
-                  const until = siteCooldownUntil[BULK_KEY]
-                  if (until && now < until) {
-                    setAnomalyStatus('error')
-                    const secs = Math.ceil((until - now) / 1000)
-                    setAnomalyMessage(`Please wait ${secs}s before triggering again`)
-                    return
-                  }
-
-                  setAnomalyStatus('loading')
-                  // New API call: POST /anomaly/check with all site ids in view
-                  const siteIds = Array.from(new Set(sites.map((s) => s.siteNumber)))
-                  const resp = await checkAnomaly(siteIds, 10)
-                  setAnomalyStatus('success')
-                  // Parse response into anomaly map if possible
-                  try {
-                    const map: Record<string, boolean> = {}
-                    const reasonMap: Record<string, string> = {}
-                    const predictedMap: Record<string, number> = {}
-                    if (Array.isArray(resp?.results)) {
-                      resp.results.forEach((r: any) => {
-                        const id = String(r?.site || r?.station || r?.id || '').trim()
-                        if (!id) return
-                        map[id] = Boolean(r?.anomalous)
-                        const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
-                        if (reason) reasonMap[id] = reason
-                        const pv = (r?.predicted_value as any)
-                        const pvNum = typeof pv === 'number' ? pv : Number(pv)
-                        if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
-                      })
-                    } else if (Array.isArray(resp?.items)) {
-                      resp.items.forEach((r: any) => {
-                        const id = String(r?.site || r?.station || r?.id || '').trim()
-                        if (!id) return
-                        map[id] = Boolean(r?.anomalous)
-                        const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
-                        if (reason) reasonMap[id] = reason
-                        const pv = (r?.predicted_value as any)
-                        const pvNum = typeof pv === 'number' ? pv : Number(pv)
-                        if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
-                      })
-                    } else if (Array.isArray(resp)) {
-                      resp.forEach((r: any) => {
-                        const id = String(r?.site || r?.station || r?.id || '').trim()
-                        if (!id) return
-                        map[id] = Boolean(r?.anomalous)
-                        const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim()
-                        if (reason) reasonMap[id] = reason
-                        const pv = (r?.predicted_value as any)
-                        const pvNum = typeof pv === 'number' ? pv : Number(pv)
-                        if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
-                      })
-                    } else if (resp && typeof resp === 'object') {
-                      Object.keys(resp).forEach((k) => {
-                        const v: any = (resp as any)[k]
-                        if (v && typeof v === 'object') {
-                          if ('anomalous' in v) map[String(k).trim()] = Boolean((v as any).anomalous)
-                          const reason = (v?.anomalous_reason ?? v?.reason ?? v?.message ?? '').toString().trim()
-                          if (reason) reasonMap[String(k).trim()] = reason
-                          const pv = (v?.predicted_value as any)
-                          const pvNum = typeof pv === 'number' ? pv : Number(pv)
-                          if (Number.isFinite(pvNum)) predictedMap[String(k).trim()] = pvNum
-                        } else if (typeof v === 'boolean') {
-                          map[k] = v
-                        }
-                      })
-                    }
-                    if (Object.keys(map).length > 0) {
-                      setAnomalyBySite(map)
-                      const flaggedIds = Object.keys(map).filter((k) => map[k])
-                      const count = flaggedIds.length
-                      const flaggedReasons = flaggedIds
-                        .map((id) => (reasonMap[id] || '').trim())
-                        .filter((r) => r.length > 0)
-                      let reasonSuffix = ''
-                      if (flaggedReasons.length > 0) {
-                        const freq: Record<string, number> = {}
-                        for (const r of flaggedReasons) freq[r] = (freq[r] || 0) + 1
-                        const topReason = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]
-                        reasonSuffix = ` (reason: ${topReason})`
-                      }
-                      setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s); ${count} flagged${reasonSuffix}.`)
-
-                      if (count > 0) {
-                        try {
-                          // small delay to allow any UI updates before capture
-                          await new Promise((r) => setTimeout(r, 300))
-                          const mapEl = document.querySelector('.leaflet-container') as HTMLElement
-                          if (mapEl) {
-                            // Provide red pin SVG for anomalies in the cloned DOM only
-                            const redSvg = `<svg xmlns='http://www.w3.org/2000/svg' width='25' height='41' viewBox='0 0 25 41'><path d='M12.5 0C5.6 0 0 5.6 0 12.5c0 8.1 11.2 17.6 11.7 18 .5.4 1.1.4 1.6 0C13.8 30.1 25 20.6 25 12.5 25 5.6 19.4 0 12.5 0z' fill='#dc2626'/><circle cx='12.5' cy='12.5' r='5.5' fill='#ffffff'/></svg>`
-                            const redDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(redSvg)}`
-                            const canvas = await html2canvas(mapEl, {
-                              useCORS: true,
-                              scale: 1,
-                              logging: false,
-                              onclone: (clonedDoc: Document) => {
-                                const imgs = clonedDoc.querySelectorAll('.leaflet-marker-icon.marker-red') as NodeListOf<HTMLImageElement>
-                                imgs.forEach((img) => {
-                                  try { img.src = redDataUrl } catch {}
-                                })
-                              },
-                            } as any)
-                            const dataUrl = canvas.toDataURL('image/png')
-                            const today = new Date().toISOString().slice(0, 10)
-                            const items = flaggedIds.map((id) => ({
-                              site: id,
-                              reason: (reasonMap[id] || flaggedReasons[0] || '').toString() || undefined,
-                              predicted_value: (predictedMap[id] ?? null) as number | null,
-                              anomaly_date: today,
-                            }))
-                            await createPdfReport(dataUrl, items)
-                          }
-                        } catch (err) {
-                          console.warn('Failed to create report', err)
-                        }
-                      }
-                    } else {
-                      setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) 
-                    }
-                  } catch {
-                    setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) 
-                  }
-                  setSiteCooldownUntil({ ...siteCooldownUntil, [BULK_KEY]: now + COOLDOWN_MS })
-                } catch (e: any) {
-                  setAnomalyStatus('error')
-                  setAnomalyMessage(`Failed to trigger anomaly prediction${e?.message ? `: ${e.message}` : ''}`)
-                } finally {
-                  try {
-                    if (refreshAlertsTimerRef.current) {
-                      window.clearTimeout(refreshAlertsTimerRef.current)
-                    }
-                    refreshAlertsTimerRef.current = window.setTimeout(async () => {
-                      try {
-                        const { alerts } = await getRecentAlerts(10)
-                        setRecentAlerts(alerts)
-                      } catch {}
-                    }, 15000)
-                  } catch {}
-                }
-              }}
-              disabled={sites.length === 0 || anomalyStatus === 'loading'}
-              aria-label="Predict anomaly for visible sites"
-              title="Predict anomaly for visible sites"
-              aria-busy={anomalyStatus === 'loading'}
-              style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: sites.length > 0 && anomalyStatus !== 'loading' ? '#1f2937' : '#f3f4f6', color: sites.length > 0 && anomalyStatus !== 'loading' ? '#ffffff' : '#9ca3af', cursor: sites.length > 0 && anomalyStatus !== 'loading' ? 'pointer' : 'not-allowed' }}
-            >
-              {anomalyStatus === 'loading' ? 'Predicting…' : 'Predict Anomaly'}
-            </button>
-            <button
-              onClick={() => {
-                setAnomalyBySite({})
-                setAnomalyStatus('idle')
-                setAnomalyMessage('Anomalous markers reset')
-              }}
-              disabled={!hasAnomalies}
-              aria-label="Reset anomaly markers"
-              title="Reset anomaly markers"
-              style={{
-                width: '100%',
-                border: hasAnomalies ? '1px solid #1d4ed8' : '1px solid #e5e7eb',
-                borderRadius: 6,
-                padding: '8px 10px',
-                background: hasAnomalies ? '#2563eb' : '#f3f4f6',
-                color: hasAnomalies ? '#ffffff' : '#9ca3af',
-                cursor: hasAnomalies ? 'pointer' : 'not-allowed',
-              }}
-            >
-              Reset
-            </button>
-          </div>
-          {(anomalyStatus === 'success' || anomalyStatus === 'error') && (
-            <div style={{ marginTop: 6, fontSize: 12, color: anomalyStatus === 'success' ? '#065f46' : '#991b1b' }}>{anomalyMessage}</div>
-          )}
+          {/* moved buttons below chart */}
         </div>
+        )}
+        {activeTab === 'training' && (
+          <div />
+        )}
         {/* <div style={{ overflow: 'auto', display: 'grid', gap: 6 }}></div> */}
 
-        <div>
+        {activeTab === 'prediction' && (
+        <div style={{ marginTop: 0, paddingTop: 0 }}>
           {!selected && (
-            <div style={{ color: '#6b7280', marginBottom: 8 }}>Select a site to see details, or view metrics below.</div>
+            <div style={{ color: '#6b7280', margin: 0 }}>Select a site to see details, or view metrics below.</div>
           )}
 
           {selected?.loading && <div>Loading latest values…</div>}
@@ -519,7 +375,7 @@ export function MapView() {
           })()}
 
           {/* Timeseries chart (single, selectable) */}
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 8 }}>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>Last 7 days</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -555,95 +411,130 @@ export function MapView() {
               </div>
               <Sparkline points={tsByCode[chartParam] || []} predictedPoints={priorWeekTsByCode[chartParam] || []} width={800} height={260} showActual={showActual} showPredicted={showPredicted} />
             </div>
-          </div>
-
-          {/* Alerts above Notifications */}
-          <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb' }} />
-          <div style={{ paddingTop: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <div style={{ fontWeight: 700 }}>Alerts (last 10 min)</div>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                {recentAlertsLoading && <span className="spinner-sm" aria-hidden />}
+                          {/* Actions moved below chart */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
                 <button
-                  type="button"
                   onClick={async () => {
+                    if (sites.length === 0) return
                     try {
-                      setRecentAlertsLoading(true)
-                      setRecentAlertsError(undefined)
-                      const { alerts } = await getRecentAlerts(10)
-                      setRecentAlerts(alerts)
+                      setAnomalyMessage('')
+                      const now = Date.now()
+                      const until = siteCooldownUntil[BULK_KEY]
+                      if (until && now < until) {
+                        setAnomalyStatus('error')
+                        const secs = Math.ceil((until - now) / 1000)
+                        setAnomalyMessage(`Please wait ${secs}s before triggering again`)
+                        return
+                      }
+
+                      setAnomalyStatus('loading')
+                      const siteIds = Array.from(new Set(sites.map((s) => s.siteNumber)))
+                      const resp = await checkAnomaly(siteIds, 10)
+                      setAnomalyStatus('success')
+                      try {
+                        const map: Record<string, boolean> = {}
+                        const reasonMap: Record<string, string> = {}
+                        const predictedMap: Record<string, number> = {}
+                        if (Array.isArray(resp?.results)) {
+                          resp.results.forEach((r: any) => {
+                            const id = String(r?.site || r?.station || r?.id || '').trim(); if (!id) return
+                            map[id] = Boolean(r?.anomalous)
+                            const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim(); if (reason) reasonMap[id] = reason
+                            const pv = (r?.predicted_value as any); const pvNum = typeof pv === 'number' ? pv : Number(pv); if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
+                          })
+                        } else if (Array.isArray(resp?.items)) {
+                          resp.items.forEach((r: any) => {
+                            const id = String(r?.site || r?.station || r?.id || '').trim(); if (!id) return
+                            map[id] = Boolean(r?.anomalous)
+                            const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim(); if (reason) reasonMap[id] = reason
+                            const pv = (r?.predicted_value as any); const pvNum = typeof pv === 'number' ? pv : Number(pv); if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
+                          })
+                        } else if (Array.isArray(resp)) {
+                          resp.forEach((r: any) => {
+                            const id = String(r?.site || r?.station || r?.id || '').trim(); if (!id) return
+                            map[id] = Boolean(r?.anomalous)
+                            const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim(); if (reason) reasonMap[id] = reason
+                            const pv = (r?.predicted_value as any); const pvNum = typeof pv === 'number' ? pv : Number(pv); if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
+                          })
+                        } else if (resp && typeof resp === 'object') {
+                          Object.keys(resp).forEach((k) => {
+                            const v: any = (resp as any)[k]
+                            if (v && typeof v === 'object') {
+                              if ('anomalous' in v) map[String(k).trim()] = Boolean((v as any).anomalous)
+                              const reason = (v?.anomalous_reason ?? v?.reason ?? v?.message ?? '').toString().trim(); if (reason) reasonMap[String(k).trim()] = reason
+                              const pv = (v?.predicted_value as any); const pvNum = typeof pv === 'number' ? pv : Number(pv); if (Number.isFinite(pvNum)) predictedMap[String(k).trim()] = pvNum
+                            } else if (typeof v === 'boolean') { map[k] = v }
+                          })
+                        }
+                        if (Object.keys(map).length > 0) {
+                          setAnomalyBySite(map)
+                          const flaggedIds = Object.keys(map).filter((k) => map[k])
+                          const count = flaggedIds.length
+                          const flaggedReasons = flaggedIds.map((id) => (reasonMap[id] || '').trim()).filter((r) => r.length > 0)
+                          let reasonSuffix = ''
+                          if (flaggedReasons.length > 0) {
+                            const freq: Record<string, number> = {}
+                            for (const r of flaggedReasons) freq[r] = (freq[r] || 0) + 1
+                            const topReason = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]
+                            reasonSuffix = ` (reason: ${topReason})`
+                          }
+                          setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s); ${count} flagged${reasonSuffix}.`)
+
+                          if (count > 0) {
+                            try {
+                              await new Promise((r) => setTimeout(r, 300))
+                              const mapEl = document.querySelector('.leaflet-container') as HTMLElement
+                              if (mapEl) {
+                                const redSvg = `<svg xmlns='http://www.w3.org/2000/svg' width='25' height='41' viewBox='0 0 25 41'><path d='M12.5 0C5.6 0 0 5.6 0 12.5c0 8.1 11.2 17.6 11.7 18 .5.4 1.1.4 1.6 0C13.8 30.1 25 20.6 25 12.5 25 5.6 19.4 0 12.5 0z' fill='#dc2626'/><circle cx='12.5' cy='12.5' r='5.5' fill='#ffffff'/></svg>`
+                                const redDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(redSvg)}`
+                                const canvas = await html2canvas(mapEl, { useCORS: true, scale: 1, logging: false, onclone: (clonedDoc: Document) => {
+                                  const imgs = clonedDoc.querySelectorAll('.leaflet-marker-icon.marker-red') as NodeListOf<HTMLImageElement>
+                                  imgs.forEach((img) => { try { img.src = redDataUrl } catch {} })
+                                } } as any)
+                                const dataUrl = canvas.toDataURL('image/png')
+                                const today = new Date().toISOString().slice(0, 10)
+                                const items = flaggedIds.map((id) => ({ site: id, reason: (reasonMap[id] || flaggedReasons[0] || '').toString() || undefined, predicted_value: (predictedMap[id] ?? null) as number | null, anomaly_date: today }))
+                                await createPdfReport(dataUrl, items)
+                              }
+                            } catch (err) { console.warn('Failed to create report', err) }
+                          }
+                        } else { setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) }
+                      } catch { setAnomalyMessage(`Anomaly prediction triggered for ${siteIds.length} site(s)`) }
+                      setSiteCooldownUntil({ ...siteCooldownUntil, [BULK_KEY]: now + COOLDOWN_MS })
                     } catch (e: any) {
-                      setRecentAlertsError(e?.message || 'Failed to load alerts')
+                      setAnomalyStatus('error')
+                      setAnomalyMessage(`Failed to trigger anomaly prediction${e?.message ? `: ${e.message}` : ''}`)
                     } finally {
-                      setRecentAlertsLoading(false)
+                      try {
+                        if (refreshAlertsTimerRef.current) window.clearTimeout(refreshAlertsTimerRef.current)
+                        refreshAlertsTimerRef.current = window.setTimeout(async () => { try { const { alerts } = await getRecentAlerts(10); setRecentAlerts(alerts) } catch {} }, 15000)
+                      } catch {}
                     }
                   }}
-                  style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', background: '#f9fafb', cursor: 'pointer' }}
-                  aria-label="Refresh alerts"
+                  disabled={sites.length === 0 || anomalyStatus === 'loading'}
+                  aria-label="Predict anomaly for visible sites"
+                  title="Predict anomaly for visible sites"
+                  aria-busy={anomalyStatus === 'loading'}
+                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: sites.length > 0 && anomalyStatus !== 'loading' ? '#1f2937' : '#f3f4f6', color: sites.length > 0 && anomalyStatus !== 'loading' ? '#ffffff' : '#9ca3af', cursor: sites.length > 0 && anomalyStatus !== 'loading' ? 'pointer' : 'not-allowed' }}
                 >
-                  Refresh
+                  {anomalyStatus === 'loading' ? 'Predicting…' : 'Predict Anomaly'}
+                </button>
+                <button
+                  onClick={() => { setAnomalyBySite({}); setAnomalyStatus('idle'); setAnomalyMessage('Anomalous markers reset') }}
+                  disabled={!hasAnomalies}
+                  aria-label="Reset anomaly markers"
+                  title="Reset anomaly markers"
+                  style={{ width: '100%', border: hasAnomalies ? '1px solid #1d4ed8' : '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: hasAnomalies ? '#2563eb' : '#f3f4f6', color: hasAnomalies ? '#ffffff' : '#9ca3af', cursor: hasAnomalies ? 'pointer' : 'not-allowed' }}
+                >
+                  Reset
                 </button>
               </div>
-            </div>
-            {/* Loading indicator shown next to the button */}
-            {recentAlertsError && <div style={{ fontSize: 12, color: '#991b1b' }}>{recentAlertsError}</div>}
-
-            {(!recentAlerts || recentAlerts.length === 0) && !recentAlertsLoading ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 0' }}>
-                <img src="/desert.png" alt="No data" style={{ width: 280, height: 'auto', opacity: 0.9 }} />
-                <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800, color: '#9ca3af' }}>No Data</div>
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gap: 8 }}>
-                {recentAlerts.slice(0, 1).map((a) => {
-                  const sev = (a.severity || '').toLowerCase()
-                  const badgeColor = sev === 'high' ? '#dc2626' : sev === 'medium' ? '#d97706' : '#059669'
-                  return (
-                    <div key={a.alert_id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                          <span style={{ fontWeight: 700 }}>{a.alert_name || 'Alert'}</span>
-                          <span style={{ display: 'inline-block', fontSize: 12, color: '#fff', background: badgeColor, borderRadius: 9999, padding: '2px 8px' }}>{sev || 'info'}</span>
-                        </div>
-                        <div style={{ fontSize: 12, color: '#6b7280' }}>
-                          {a.anomaly_date ? `Anomaly date: ${a.anomaly_date}` : ''}
-                          {a.createdon_ms ? ` • ${new Date(a.createdon_ms).toLocaleString()}` : ''}
-                        </div>
-                        {Array.isArray(a.sites_impacted) && a.sites_impacted.length > 0 && (
-                          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                            {a.sites_impacted.slice(0, 4).map((s) => (
-                              <span key={s} style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f3f4f6' }}>#{s}</span>
-                            ))}
-                            {a.sites_impacted.length > 4 && (
-                              <span style={{ fontSize: 12, color: '#6b7280' }}>+{a.sites_impacted.length - 4} more</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {a.s3_signed_url && (
-                          <a href={a.s3_signed_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 12px', fontSize: 14, background: '#1f2937', color: '#fff' }}>
-                            Download report
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-                {recentAlerts.length > 1 && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      onClick={() => { setAlertsModalOpen(true); setAlertsPage(1) }}
-                      style={{ marginTop: 4, fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: '#f9fafb', cursor: 'pointer' }}
-                    >
-                      View all {recentAlerts.length} alerts
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
+              {(anomalyStatus === 'success' || anomalyStatus === 'error') && (
+                <div style={{ marginTop: 6, fontSize: 12, color: anomalyStatus === 'success' ? '#065f46' : '#991b1b' }}>{anomalyMessage}</div>
+              )}
           </div>
+
+          {/* Alerts moved to Alerts tab */}
 
           
 
@@ -678,11 +569,13 @@ export function MapView() {
 
           
         </div>
-        {/* Bottom row: Notifications with divider above */}
-        <div>
-          <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb' }} />
-          <div style={{ fontWeight: 700, marginTop: 8, marginBottom: 6 }}>Notifications</div>
-          <form
+        )}
+        {/* Alerts tab content: alerts list + notifications */}
+        {activeTab === 'alerts' && (
+          <div>
+            {/* Notifications first */}
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Notifications</div>
+            <form
               onSubmit={async (e) => {
                 e.preventDefault()
                 const email = emailInput.trim()
@@ -707,7 +600,7 @@ export function MapView() {
                   setSubscribeMessage(`Subscription failed${err?.message ? `: ${err.message}` : ''}`)
                 }
               }}
-              style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}
+              style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginBottom: 12 }}
               aria-label="Subscribe to alert notifications"
             >
               <input
@@ -730,7 +623,92 @@ export function MapView() {
                 </div>
               )}
             </form>
-        </div>
+
+            {/* Alerts list second */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ fontWeight: 700 }}>Alerts (last 10 min)</div>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                {recentAlertsLoading && <span className="spinner-sm" aria-hidden />}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setRecentAlertsLoading(true)
+                      setRecentAlertsError(undefined)
+                      const { alerts } = await getRecentAlerts(10)
+                      setRecentAlerts(alerts)
+                    } catch (e: any) {
+                      setRecentAlertsError(e?.message || 'Failed to load alerts')
+                    } finally {
+                      setRecentAlertsLoading(false)
+                    }
+                  }}
+                  style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', background: '#f9fafb', cursor: 'pointer' }}
+                  aria-label="Refresh alerts"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+            {recentAlertsError && <div style={{ fontSize: 12, color: '#991b1b' }}>{recentAlertsError}</div>}
+
+            {(!recentAlerts || recentAlerts.length === 0) && !recentAlertsLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 0' }}>
+                <img src="/desert.png" alt="No data" style={{ width: 280, height: 'auto', opacity: 0.9 }} />
+                <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800, color: '#9ca3af' }}>No Data</div>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {recentAlerts.slice(0, 5).map((a) => {
+                  const sev = (a.severity || '').toLowerCase()
+                  const badgeColor = sev === 'high' ? '#dc2626' : sev === 'medium' ? '#d97706' : '#059669'
+                  return (
+                    <div key={a.alert_id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <span style={{ fontWeight: 700 }}>{a.alert_name || 'Alert'}</span>
+                          <span style={{ display: 'inline-block', fontSize: 12, color: '#fff', background: badgeColor, borderRadius: 9999, padding: '2px 8px' }}>{sev || 'info'}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#6b7280' }}>
+                          {a.anomaly_date ? `Anomaly date: ${a.anomaly_date}` : ''}
+                          {a.createdon_ms ? ` • ${new Date(a.createdon_ms).toLocaleString()}` : ''}
+                        </div>
+                        {Array.isArray(a.sites_impacted) && a.sites_impacted.length > 0 && (
+                          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {a.sites_impacted.slice(0, 4).map((s) => (
+                              <span key={s} style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f3f4f6' }}>#{s}</span>
+                            ))}
+                            {a.sites_impacted.length > 4 && (
+                              <span style={{ fontSize: 12, color: '#6b7280' }}>+{a.sites_impacted.length - 4} more</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {a.s3_signed_url && (
+                          <a href={a.s3_signed_url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 12px', fontSize: 14, background: '#1f2937', color: '#fff' }}>
+                            Download report
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+                {recentAlerts.length > 5 && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setAlertsModalOpen(true); setAlertsPage(1) }}
+                      style={{ marginTop: 4, fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: '#f9fafb', cursor: 'pointer' }}
+                    >
+                      View all {recentAlerts.length} alerts
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </aside>
       {anomalyStatus === 'loading' && (
         <div
