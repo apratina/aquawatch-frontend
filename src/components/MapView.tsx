@@ -69,6 +69,9 @@ export function MapView() {
   const [showActual, setShowActual] = useState(true)
   const [showPredicted, setShowPredicted] = useState(true)
   const [anomalyBySite, setAnomalyBySite] = useState<Record<string, boolean>>({})
+  const [anomalyReasonBySite, setAnomalyReasonBySite] = useState<Record<string, string>>({})
+  const [anomalyPredictedValueBySite, setAnomalyPredictedValueBySite] = useState<Record<string, number>>({})
+  const [anomalyCurrentValueBySite, setAnomalyCurrentValueBySite] = useState<Record<string, number>>({})
   const hasAnomalies = useMemo(() => Object.values(anomalyBySite).some(Boolean), [anomalyBySite])
   const [recentAlerts, setRecentAlerts] = useState<BackendAlert[]>([])
   const [recentAlertsError, setRecentAlertsError] = useState<string | undefined>()
@@ -585,12 +588,15 @@ export function MapView() {
                         const map: Record<string, boolean> = {}
                         const reasonMap: Record<string, string> = {}
                         const predictedMap: Record<string, number> = {}
+                        const currentMap: Record<string, number> = {}
                         if (Array.isArray(resp?.results)) {
                           resp.results.forEach((r: any) => {
                             const id = String(r?.site || r?.station || r?.id || '').trim(); if (!id) return
                             map[id] = Boolean(r?.anomalous)
                             const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim(); if (reason) reasonMap[id] = reason
                             const pv = (r?.predicted_value as any); const pvNum = typeof pv === 'number' ? pv : Number(pv); if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
+                            const cvRaw: any = (r?.current_value ?? r?.current ?? r?.value ?? r?.observed_value ?? r?.actual_value)
+                            const cvNum = typeof cvRaw === 'number' ? cvRaw : Number(cvRaw); if (Number.isFinite(cvNum)) currentMap[id] = cvNum
                           })
                         } else if (Array.isArray(resp?.items)) {
                           resp.items.forEach((r: any) => {
@@ -598,6 +604,8 @@ export function MapView() {
                             map[id] = Boolean(r?.anomalous)
                             const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim(); if (reason) reasonMap[id] = reason
                             const pv = (r?.predicted_value as any); const pvNum = typeof pv === 'number' ? pv : Number(pv); if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
+                            const cvRaw: any = (r?.current_value ?? r?.current ?? r?.value ?? r?.observed_value ?? r?.actual_value)
+                            const cvNum = typeof cvRaw === 'number' ? cvRaw : Number(cvRaw); if (Number.isFinite(cvNum)) currentMap[id] = cvNum
                           })
                         } else if (Array.isArray(resp)) {
                           resp.forEach((r: any) => {
@@ -605,6 +613,8 @@ export function MapView() {
                             map[id] = Boolean(r?.anomalous)
                             const reason = (r?.anomalous_reason ?? r?.reason ?? r?.message ?? '').toString().trim(); if (reason) reasonMap[id] = reason
                             const pv = (r?.predicted_value as any); const pvNum = typeof pv === 'number' ? pv : Number(pv); if (Number.isFinite(pvNum)) predictedMap[id] = pvNum
+                            const cvRaw: any = (r?.current_value ?? r?.current ?? r?.value ?? r?.observed_value ?? r?.actual_value)
+                            const cvNum = typeof cvRaw === 'number' ? cvRaw : Number(cvRaw); if (Number.isFinite(cvNum)) currentMap[id] = cvNum
                           })
                         } else if (resp && typeof resp === 'object') {
                           Object.keys(resp).forEach((k) => {
@@ -613,11 +623,16 @@ export function MapView() {
                               if ('anomalous' in v) map[String(k).trim()] = Boolean((v as any).anomalous)
                               const reason = (v?.anomalous_reason ?? v?.reason ?? v?.message ?? '').toString().trim(); if (reason) reasonMap[String(k).trim()] = reason
                               const pv = (v?.predicted_value as any); const pvNum = typeof pv === 'number' ? pv : Number(pv); if (Number.isFinite(pvNum)) predictedMap[String(k).trim()] = pvNum
+                              const cvRaw: any = (v?.current_value ?? v?.current ?? v?.value ?? v?.observed_value ?? v?.actual_value)
+                              const cvNum = typeof cvRaw === 'number' ? cvRaw : Number(cvRaw); if (Number.isFinite(cvNum)) currentMap[String(k).trim()] = cvNum
                             } else if (typeof v === 'boolean') { map[k] = v }
                           })
                         }
                         if (Object.keys(map).length > 0) {
                           setAnomalyBySite(map)
+                          setAnomalyReasonBySite(reasonMap)
+                          setAnomalyPredictedValueBySite(predictedMap)
+                          setAnomalyCurrentValueBySite(currentMap)
                           const flaggedIds = Object.keys(map).filter((k) => map[k])
                           const count = flaggedIds.length
                           const flaggedReasons = flaggedIds.map((id) => (reasonMap[id] || '').trim()).filter((r) => r.length > 0)
@@ -670,7 +685,7 @@ export function MapView() {
                   {anomalyStatus === 'loading' ? 'Predicting…' : 'Predict Anomaly'}
                 </button>
                 <button
-                  onClick={() => { setAnomalyBySite({}); setAnomalyStatus('idle'); setAnomalyMessage('Anomalous markers reset') }}
+                  onClick={() => { setAnomalyBySite({}); setAnomalyReasonBySite({}); setAnomalyPredictedValueBySite({}); setAnomalyCurrentValueBySite({}); setAnomalyStatus('idle'); setAnomalyMessage('Anomalous markers reset') }}
                   disabled={!hasAnomalies}
                   aria-label="Reset anomaly markers"
                   title="Reset anomaly markers"
@@ -679,6 +694,50 @@ export function MapView() {
                   Reset
                 </button>
               </div>
+              {hasAnomalies && (() => {
+                const flaggedAll = Object.keys(anomalyBySite).filter((id) => anomalyBySite[id])
+                const selectedId = selected?.site?.siteNumber
+                const flaggedSorted = flaggedAll.sort((a, b) => {
+                  if (selectedId && a === selectedId) return -1
+                  if (selectedId && b === selectedId) return 1
+                  return a.localeCompare(b)
+                })
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <div style={{ fontWeight: 700 }}>Anomalous sites</div>
+                      <span style={{ fontSize: 12, color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f9fafb' }}>{flaggedSorted.length}</span>
+                    </div>
+                    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#ffffff' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(70px, auto) 1fr minmax(78px, auto) minmax(78px, auto)', gap: 8, padding: '6px 8px', fontSize: 12, color: '#6b7280', background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                        <div>Site</div>
+                        <div>Reason</div>
+                        <div style={{ textAlign: 'right' }}>Current</div>
+                        <div style={{ textAlign: 'right' }}>Predicted</div>
+                      </div>
+                      <div style={{ maxHeight: 160, overflow: 'auto' }}>
+                        {flaggedSorted.map((id) => {
+                          const reason = anomalyReasonBySite[id]
+                          const predicted = anomalyPredictedValueBySite[id]
+                          const current = anomalyCurrentValueBySite[id]
+                          const isSelected = selectedId === id
+                          return (
+                            <div key={id} style={{ display: 'grid', gridTemplateColumns: 'minmax(70px, auto) 1fr minmax(78px, auto) minmax(78px, auto)', gap: 8, padding: '8px 8px', alignItems: 'center', borderBottom: '1px solid #f3f4f6', background: isSelected ? '#f8fafc' : undefined }}>
+                              <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', whiteSpace: 'nowrap' }}>#{id}</div>
+                              <div title={reason || ''} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reason || '—'}</div>
+                              <div style={{ textAlign: 'right' }}>{Number.isFinite(current) ? String(current) : '—'}</div>
+                              <div style={{ textAlign: 'right' }}>{Number.isFinite(predicted) ? String(predicted) : '—'}</div>
+                            </div>
+                          )
+                        })}
+                        {flaggedSorted.length === 0 && (
+                          <div style={{ padding: 10, color: '#6b7280', fontSize: 12 }}>No anomalous sites</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
               {(anomalyStatus === 'success' || anomalyStatus === 'error') && (
                 <div style={{ marginTop: 6, fontSize: 12, color: anomalyStatus === 'success' ? '#065f46' : '#991b1b' }}>{anomalyMessage}</div>
               )}
