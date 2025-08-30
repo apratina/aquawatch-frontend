@@ -61,11 +61,11 @@ export async function getPredictionStatus(stationId: string): Promise<Prediction
 }
 
 // New API: check anomaly via POST with sites and threshold_percent
-export async function checkAnomaly(sites: string[], thresholdPercent: number): Promise<any> {
+export async function checkAnomaly(sites: string[]): Promise<any> {
   try {
     const { data } = await http.post(
       `/anomaly/check`,
-      { sites, threshold_percent: thresholdPercent },
+      { sites },
       { headers: { 'Content-Type': 'application/json' } }
     )
     return data

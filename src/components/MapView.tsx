@@ -61,7 +61,7 @@ export function MapView() {
   const [trainingStatus, setTrainingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [trainingMessage, setTrainingMessage] = useState<string>('')
   const [siteCooldownUntil, setSiteCooldownUntil] = useState<Record<string, number>>({})
-  const COOLDOWN_MS = 30_000 // 30 seconds client-side cooldown
+  const COOLDOWN_MS = 10_000 // 30 seconds client-side cooldown
   const BULK_KEY = '*'
   const [tsByCode, setTsByCode] = useState<Record<string, TimePoint[]>>({})
   const [priorWeekTsByCode, setPriorWeekTsByCode] = useState<Record<string, TimePoint[]>>({})
@@ -582,7 +582,7 @@ export function MapView() {
 
                       setAnomalyStatus('loading')
                       const siteIds = Array.from(new Set(sites.map((s) => s.siteNumber)))
-                      const resp = await checkAnomaly(siteIds, 10)
+                      const resp = await checkAnomaly(siteIds)
                       setAnomalyStatus('success')
                       try {
                         const map: Record<string, boolean> = {}
