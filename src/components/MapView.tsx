@@ -6,6 +6,7 @@ import { fetchLatestForSite, fetchSevenDayTimeseriesReal, fetchSevenDayTimeserie
 import { checkAnomaly, triggerTrainingBulk, getTrainModels, type TrainModelItem } from '../api/anomaly'
 import { subscribeToAlerts, getRecentAlerts, type BackendAlert } from '../api/alerts'
 import { Sparkline } from './Sparkline'
+import { buttonStyle } from './buttonStyles'
 import html2canvas from 'html2canvas'
 import { createPdfReport } from '../api/report'
 import type { TimePoint } from '../api/usgs'
@@ -316,13 +317,10 @@ export function MapView() {
                 type="button"
                 onClick={() => setActiveTab(t.key as any)}
                 style={{
-                  border: '1px solid #e5e7eb',
+                  ...buttonStyle({ variant: 'secondary', size: 'sm' }),
                   borderBottomColor: isActive ? '#ffffff' : '#e5e7eb',
                   borderRadius: '6px 6px 0 0',
-                  padding: '6px 10px',
                   background: isActive ? '#ffffff' : '#f9fafb',
-                  color: '#111827',
-                  cursor: 'pointer',
                 }}
               >
                 {t.label}
@@ -364,13 +362,14 @@ export function MapView() {
             <div style={{ fontWeight: 700 }}>Sites in view</div>
             <div style={{ fontSize: 12, color: '#6b7280' }}>{sites.length}</div>
           </div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 6 }}>Bulk‑train models for all visible sites.</div>
           <select
             onChange={(e) => {
               const sn = e.target.value
               const site = sitesInView.find((s) => s.siteNumber === sn)
               if (site) onSelectSite(site, true)
             }}
-            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 8px' }}
+            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 8px', background: '#ffffff' }}
             value={selected?.site.siteNumber ?? ''}
             disabled={needsZoom || sitesInView.length === 0}
           >
@@ -400,10 +399,23 @@ export function MapView() {
                 }
               }}
               disabled={sitesInView.length === 0 || trainingStatus === 'loading'}
-              style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: sitesInView.length > 0 && trainingStatus !== 'loading' ? '#1f2937' : '#f3f4f6', color: sitesInView.length > 0 && trainingStatus !== 'loading' ? '#ffffff' : '#9ca3af', cursor: sitesInView.length > 0 && trainingStatus !== 'loading' ? 'pointer' : 'not-allowed' }}
+              aria-busy={trainingStatus === 'loading'}
+              style={{ width: '100%', ...buttonStyle({ variant: 'primary', disabled: sitesInView.length === 0 || trainingStatus === 'loading' }) }}
             >
-              Train Model
+              {trainingStatus === 'loading' ? (
+                <>
+                  <span className="spinner-sm" aria-hidden />
+                  Training…
+                </>
+              ) : (
+                <>
+                  Train Models
+                </>
+              )}
             </button>
+            <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+              Will train models for {Array.from(new Set(sitesInView.map((s) => s.siteNumber))).length} station(s) in view.
+            </div>
             {(trainingStatus === 'success' || trainingStatus === 'error') && (
               <div style={{ marginTop: 6, fontSize: 12, color: trainingStatus === 'success' ? '#065f46' : '#991b1b' }}>{trainingMessage}</div>
             )}
@@ -415,6 +427,7 @@ export function MapView() {
               <div style={{ fontWeight: 700 }}>Recent training (last 7 days)</div>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 {trainedLoading && <span className="spinner-sm" aria-hidden />}
+                <span style={{ fontSize: 12, color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f9fafb' }}>{trainedItems.length}</span>
                 <button
                   type="button"
                   onClick={async () => {
@@ -429,9 +442,9 @@ export function MapView() {
                       setTrainedLoading(false)
                     }
                   }}
-                  style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', background: '#f9fafb', cursor: 'pointer' }}
+                  style={{ fontSize: 12, ...buttonStyle({ variant: 'secondary', size: 'sm' }) }}
                 >
-                  Refresh
+                  ↻ Refresh
                 </button>
               </div>
             </div>
@@ -444,12 +457,14 @@ export function MapView() {
             ) : (
               <div style={{ display: 'grid', gap: 8 }}>
                 {trainedItems.map((it) => (
-                  <div key={it.uuid} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10 }}>
+                  <div key={it.uuid} style={{ border: '1px solid #e5e7eb', borderLeft: '4px solid #dbeafe', borderRadius: 8, padding: 10, background: '#ffffff', boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }}>
                     <details>
                       <summary style={{ listStyle: 'none', cursor: 'pointer', display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 8 }}>
                         <span className="arrow" aria-hidden style={{ color: '#6b7280' }}></span>
                         <div>
-                          <div style={{ fontWeight: 700 }}>Run # {it.uuid.slice(0, 29)}</div>
+                          <div style={{ fontWeight: 700 }}>
+                            Execution ID: <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \\"Liberation Mono\\", \\"Courier New\\", monospace' }}>{it.uuid.slice(0, 29)}</span>
+                          </div>
                           <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
                             Sites: {Array.isArray(it.sites) ? it.sites.length : 0} • {new Date(it.createdon).toLocaleString()}
                           </div>
@@ -458,7 +473,7 @@ export function MapView() {
                       {Array.isArray(it.sites) && it.sites.length > 0 && (
                         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                           {it.sites.map((s) => (
-                            <span key={s} style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 9999, padding: '2px 8px', background: '#f3f4f6' }}>#{s}</span>
+                            <span key={s} style={{ fontSize: 12, border: '1px solid #dbeafe', color: '#1e40af', borderRadius: 9999, padding: '2px 8px', background: '#eef2ff' }}>#{s}</span>
                           ))}
                         </div>
                       )}
@@ -650,7 +665,7 @@ export function MapView() {
                   aria-label="Predict anomaly for visible sites"
                   title="Predict anomaly for visible sites"
                   aria-busy={anomalyStatus === 'loading'}
-                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: sites.length > 0 && anomalyStatus !== 'loading' ? '#1f2937' : '#f3f4f6', color: sites.length > 0 && anomalyStatus !== 'loading' ? '#ffffff' : '#9ca3af', cursor: sites.length > 0 && anomalyStatus !== 'loading' ? 'pointer' : 'not-allowed' }}
+                  style={{ width: '100%', ...buttonStyle({ variant: 'primary', disabled: sites.length === 0 || anomalyStatus === 'loading' }) }}
                 >
                   {anomalyStatus === 'loading' ? 'Predicting…' : 'Predict Anomaly'}
                 </button>
@@ -659,7 +674,7 @@ export function MapView() {
                   disabled={!hasAnomalies}
                   aria-label="Reset anomaly markers"
                   title="Reset anomaly markers"
-                  style={{ width: '100%', border: hasAnomalies ? '1px solid #1d4ed8' : '1px solid #e5e7eb', borderRadius: 6, padding: '8px 10px', background: hasAnomalies ? '#2563eb' : '#f3f4f6', color: hasAnomalies ? '#ffffff' : '#9ca3af', cursor: hasAnomalies ? 'pointer' : 'not-allowed' }}
+                  style={{ width: '100%', ...buttonStyle({ variant: hasAnomalies ? 'primary' : 'secondary', disabled: !hasAnomalies }) }}
                 >
                   Reset
                 </button>
@@ -748,7 +763,7 @@ export function MapView() {
               <button
                 type="submit"
                 disabled={subscribeStatus === 'loading'}
-                style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '8px 12px', background: '#1f2937', color: '#fff', cursor: 'pointer' }}
+                style={{ ...buttonStyle({ variant: 'primary', disabled: subscribeStatus === 'loading', size: 'sm' }) }}
               >
                 Subscribe
               </button>
@@ -778,7 +793,7 @@ export function MapView() {
                       setRecentAlertsLoading(false)
                     }
                   }}
-                  style={{ fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '4px 8px', background: '#f9fafb', cursor: 'pointer' }}
+                  style={{ fontSize: 12, ...buttonStyle({ variant: 'secondary', size: 'sm' }) }}
                   aria-label="Refresh alerts"
                 >
                   Refresh
@@ -834,7 +849,7 @@ export function MapView() {
                     <button
                       type="button"
                       onClick={() => { setAlertsModalOpen(true); setAlertsPage(1) }}
-                      style={{ marginTop: 4, fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: '#f9fafb', cursor: 'pointer' }}
+                      style={{ marginTop: 4, fontSize: 12, ...buttonStyle({ variant: 'secondary', size: 'sm' }) }}
                     >
                       View all {recentAlerts.length} alerts
                     </button>
@@ -881,7 +896,7 @@ export function MapView() {
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottom: '1px solid #e5e7eb' }}>
               <div style={{ fontWeight: 700 }}>All Alerts (last 10 min)</div>
-              <button type="button" onClick={() => setAlertsModalOpen(false)} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: '#f9fafb', cursor: 'pointer' }}>Close</button>
+              <button type="button" onClick={() => setAlertsModalOpen(false)} style={{ ...buttonStyle({ variant: 'secondary', size: 'sm' }) }}>Close</button>
             </div>
             <div style={{ padding: 12, overflow: 'hidden' }}>
               {(() => {
@@ -944,7 +959,7 @@ export function MapView() {
                   type="button"
                   disabled={alertsPage <= 1}
                   onClick={() => setAlertsPage((p) => Math.max(1, p - 1))}
-                  style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: alertsPage <= 1 ? '#f3f4f6' : '#f9fafb', color: alertsPage <= 1 ? '#9ca3af' : '#111827', cursor: alertsPage <= 1 ? 'not-allowed' : 'pointer' }}
+                  style={{ ...buttonStyle({ variant: 'secondary', size: 'sm', disabled: alertsPage <= 1 }) }}
                 >
                   Previous
                 </button>
@@ -952,7 +967,7 @@ export function MapView() {
                   type="button"
                   disabled={alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE))}
                   onClick={() => setAlertsPage((p) => Math.min(Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)), p + 1))}
-                  style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 10px', background: alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)) ? '#f3f4f6' : '#f9fafb', color: alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)) ? '#9ca3af' : '#111827', cursor: alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)) ? 'not-allowed' : 'pointer' }}
+                  style={{ ...buttonStyle({ variant: 'secondary', size: 'sm', disabled: alertsPage >= Math.max(1, Math.ceil(recentAlerts.length / ALERTS_PER_PAGE)) }) }}
                 >
                   Next
                 </button>

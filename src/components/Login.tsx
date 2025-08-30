@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { sendVerificationCode, verifyCode } from '../api/sms'
+import { buttonStyle } from './buttonStyles'
 
 export function Login({ onAuthenticated }: { onAuthenticated: (token: string, expiresAtMs: number) => void }) {
   const [step, setStep] = useState<'enter' | 'code' | 'verifying'>('enter')
@@ -83,7 +84,7 @@ export function Login({ onAuthenticated }: { onAuthenticated: (token: string, ex
                   onChange={(e) => setPhone(e.target.value)}
                   style={{ border: '1px solid #d1d5db', borderRadius: 10, padding: '12px 14px', fontSize: 14 }}
                 />
-                <button onClick={onSend} style={{ border: '1px solid #1d4ed8', borderRadius: 10, padding: '12px 14px', background: '#2563eb', color: '#fff', fontWeight: 700, boxShadow: '0 2px 6px rgba(37,99,235,0.35)' }}>Send code</button>
+                <button onClick={onSend} style={{ ...buttonStyle({ variant: 'primary' }) }}>Send code</button>
               </div>
             )}
 
@@ -99,13 +100,13 @@ export function Login({ onAuthenticated }: { onAuthenticated: (token: string, ex
                   style={{ border: '1px solid #d1d5db', borderRadius: 10, padding: '12px 14px', fontSize: 16, letterSpacing: 2 }}
                 />
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setStep('enter')} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '12px 14px', background: '#f3f4f6', color: '#374151' }}>Change number</button>
-                  <button onClick={onVerify} disabled={step==='verifying'} style={{ border: '1px solid #1d4ed8', borderRadius: 10, padding: '12px 14px', background: step==='verifying' ? '#93c5fd' : '#2563eb', color: '#fff', fontWeight: 700, flex: 1, boxShadow: step==='verifying' ? 'none' : '0 2px 6px rgba(37,99,235,0.35)' }}>{step==='verifying' ? 'Verifying…' : 'Verify'}</button>
+                  <button onClick={() => setStep('enter')} style={{ ...buttonStyle({ variant: 'secondary' }) }}>Change number</button>
+                  <button onClick={onVerify} disabled={step==='verifying'} style={{ flex: 1, ...buttonStyle({ variant: 'primary', disabled: step==='verifying' }) }}>{step==='verifying' ? 'Verifying…' : 'Verify'}</button>
                 </div>
                 <button
                   onClick={onSend}
                   disabled={!canResend}
-                  style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '10px 12px', background: canResend ? '#f3f4f6' : '#f9fafb', color: canResend ? '#374151' : '#9ca3af' }}
+                  style={{ ...buttonStyle({ variant: canResend ? 'secondary' : 'secondary', disabled: !canResend }) }}
                 >
                   {canResend ? 'Resend code' : 'Resend available soon…'}
                 </button>
